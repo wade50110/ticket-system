@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: ticket-system
+  datasource:
+    url: jdbc:mysql://localhost:3307/ticketdb?useSSL=false&serverTimezone=Asia/Taipei&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+server:
+  port: 8095
+
+jwt:
+  # 開發用 secret，至少 32 bytes；正式環境請改用環境變數 JWT_SECRET
+  secret: ${JWT_SECRET:change-me-this-is-a-dev-only-secret-key-32bytes!!}
+  expiration: 3600
+
+logging:
+  level:
+    org.springframework.security: INFO
+    com.example.ticket: DEBUG
