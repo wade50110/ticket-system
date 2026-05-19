@@ -14,8 +14,8 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      await login(username, password);
-      navigate('/welcome');
+      const data = await login(username, password);
+      navigate(data.user?.role === 'ADMIN' ? '/admin/tickets' : '/shop');
     } catch (err) {
       setError(err.message);
     } finally {

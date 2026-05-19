@@ -32,6 +32,10 @@ public class User {
     @Column(length = 100)
     private String name;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) NOT NULL DEFAULT 'CUSTOMER'")
+    private Role role;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -39,6 +43,9 @@ public class User {
     void prePersist() {
         if (createdAt == null) {
             createdAt = LocalDateTime.now();
+        }
+        if (role == null) {
+            role = Role.CUSTOMER;
         }
     }
 }

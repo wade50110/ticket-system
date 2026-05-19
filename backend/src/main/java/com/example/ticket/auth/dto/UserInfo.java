@@ -1,5 +1,6 @@
 package com.example.ticket.auth.dto;
 
+import com.example.ticket.auth.Role;
 import com.example.ticket.auth.User;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -12,8 +13,15 @@ public class UserInfo {
     private String username;
     private String email;
     private String name;
+    private Role role;
 
     public static UserInfo from(User user) {
-        return new UserInfo(user.getId(), user.getUsername(), user.getEmail(), user.getName());
+        return new UserInfo(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail(),
+                user.getName(),
+                user.getRole() != null ? user.getRole() : Role.CUSTOMER
+        );
     }
 }
