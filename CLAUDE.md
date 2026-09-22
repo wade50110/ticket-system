@@ -154,6 +154,10 @@ frontend/src/
 
 ## 九、本地啟動步驟(Windows / PowerShell)
 
+兩種啟動方式:**方式一** 開發用(前後端在 host 直接跑,改一行馬上看到),**方式二** 容器化 + k8s(貼近正式部署、可 demo HPA autoscale)。
+
+### 方式一:host 本機跑(開發預設)
+
 ```powershell
 # 1) 起 MySQL + Redis(在 ticket-system/ 目錄)
 cd C:\Users\tw24301\Desktop\claudeTest\ticket-system
@@ -170,7 +174,29 @@ npm install
 npm run dev
 ```
 
-DB / Redis 更多操作與疑難排解見 `docker-setup.md`。
+DB / Redis 更多操作與疑難排解見 [`docker-setup.md`](docker-setup.md)。
+
+### 方式二:容器化 + k8s(本機 Docker Desktop)
+
+前後端容器化跑在 k8s、Nginx 在前(serve 前端 + 反代 `/api`)、後端依 CPU 自動擴縮 pod;**MySQL/Redis 仍用 docker compose 留在 k8s 外**(方式一的 DB/Redis 直接沿用)。
+
+```powershell
+cd C:\Users\tw24301\Desktop\claudeTest\ticket-system
+# 0) 起 DB/Redis(同方式一,留在 k8s 外)
+docker compose up -d
+# 1) Docker Desktop → Settings → Kubernetes → Enable(provisioning 選 Kubeadm,不要 kind)
+# 2) build image
+docker build -t ticket-backend:local ./backend
+docker build -t ticket-frontend:local ./frontend
+# 3) apply(HPA 需先裝 metrics-server,見下方 runbook)
+kubectl apply -f k8s/backend.yaml
+kubectl apply -f k8s/frontend.yaml
+# 開 http://localhost 就是完整系統
+```
+
+> ⚠️ **改程式碼後重新部署**:image tag 固定為 `:local` 且 `imagePullPolicy: IfNotPresent`,所以「重 build image + 重 apply」**不會**讓運行中的 pod 換版(Deployment spec 沒變不觸發 rollout,舊 pod 繼續跑舊 code)。重 build 後要手動觸發:`kubectl rollout restart deployment ticket-backend`(或 `ticket-frontend`)。
+
+**完整步驟**(metrics-server 安裝、壓測驗證 HPA 開關 pod、`host.docker.internal` 連 host 疑難排解)見 [`k8s/README.md`](k8s/README.md);架構設計見 [`docs/deployment/architecture.md`](docs/deployment/architecture.md)。
 
 ---
 

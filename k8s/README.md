@@ -36,6 +36,8 @@ docker build -t ticket-backend:local  ./backend
 docker build -t ticket-frontend:local ./frontend
 ```
 
+> ⚠️ **改程式碼後重新部署**:tag 固定 `:local` + `imagePullPolicy: IfNotPresent`,重 build 後單純 `kubectl apply` 不會換版(Deployment spec 沒變、不觸發 rollout,舊 pod 續跑舊 image)。重 build 後要 `kubectl rollout restart deployment ticket-backend`(或 `ticket-frontend`)才會拉起用新 image 的 pod。
+
 ### 3. 裝 metrics-server(HPA 的 CPU 指標來源)
 
 Docker Desktop k8s 預設沒有 metrics-server,且本機 kubelet 是自簽憑證,需加 `--kubelet-insecure-tls`(僅開發用):

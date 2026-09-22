@@ -176,6 +176,8 @@ spring:
 
 若要走 Docker 內部網路（後端也跑容器），把 host 改成 service 名 `mysql` / `redis`，並把它們加進同一個 compose network。本專案後端目前在 host 跑、Docker 跑 DB/cache，所以填 `localhost`。
 
+> **k8s 部署時**：MySQL/Redis 仍用這份 compose 留在 k8s 外,後端 pod 從叢集內用 `host.docker.internal`（見 `k8s/backend.yaml` 的 ConfigMap `DB_HOST`/`REDIS_HOST`）連回這組 DB/Redis（部分 Docker Desktop 版本 pod 內解析不到,fallback 見 `k8s/README.md`）。application.yml 的連線已參數化(`${DB_HOST}` / `${REDIS_HOST}` 等),由環境變數覆蓋。完整 k8s 啟動見 [`k8s/README.md`](k8s/README.md)。
+
 ---
 
 ## 七、常用維運指令
