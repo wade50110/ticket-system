@@ -16,6 +16,7 @@ public class TicketResponse {
     private String description;
     private BigDecimal price;
     private Integer stock;
+    private Integer purchaseLimit;
     private LocalDateTime visibleAt;
     private LocalDateTime visibleUntil;
     private LocalDateTime createdAt;
@@ -28,6 +29,7 @@ public class TicketResponse {
                 t.getDescription(),
                 t.getPrice(),
                 t.getStock(),
+                t.getPurchaseLimit(),
                 t.getVisibleAt(),
                 t.getVisibleUntil(),
                 t.getCreatedAt(),

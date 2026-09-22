@@ -33,6 +33,10 @@ public class Ticket {
     @Column(nullable = false)
     private Integer stock;
 
+    /** 每帳號限購數；null = 不限購 */
+    @Column(name = "purchase_limit")
+    private Integer purchaseLimit;
+
     @Column(name = "visible_at")
     private LocalDateTime visibleAt;
 

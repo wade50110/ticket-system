@@ -56,6 +56,9 @@ export default function Shop() {
                 <span className="price">${Number(t.price).toLocaleString()}</span>
                 <span className="stock">剩餘 {t.stock} 張</span>
               </div>
+              {t.purchaseLimit != null && (
+                <p className="ticket-limit">每人限購 {t.purchaseLimit} 張</p>
+              )}
               <button
                 className="btn"
                 onClick={() => handleAdd(t)}

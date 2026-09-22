@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AppLayout from '../components/AppLayout.jsx';
 import { cartApi } from '../api/cart.js';
+import { ordersApi } from '../api/orders.js';
 
 export default function Cart() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [checkingOut, setCheckingOut] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -54,6 +58,21 @@ export default function Cart() {
       await reload();
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  async function checkout() {
+    if (checkingOut) return;
+    setError('');
+    setCheckingOut(true);
+    try {
+      const order = await ordersApi.checkout();
+      navigate(`/orders/${order.orderId}`);
+    } catch (err) {
+      setError(err.message);
+      await reload();
+    } finally {
+      setCheckingOut(false);
     }
   }
 
@@ -111,7 +130,11 @@ export default function Cart() {
               </tr>
             </tfoot>
           </table>
-          <p className="hint">本版本尚未開放結帳；登出後再登入購物車仍會保留。</p>
+          <div className="cart-actions">
+            <button className="btn btn-primary" onClick={checkout} disabled={checkingOut}>
+              {checkingOut ? '結帳中…' : `結帳 $${total.toLocaleString()}`}
+            </button>
+          </div>
         </div>
       )}
     </AppLayout>

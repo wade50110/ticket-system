@@ -1,0 +1,122 @@
+# 後端:ConfigMap + Secret + Deployment + Service + HPA
+# 資料層(MySQL/Redis)留在 k8s 外(docker-compose),pod 透過 host 連。
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ticket-backend-config
+data:
+  # 連 k8s 外的 MySQL / Redis(docker-compose 起的)。
+  # host.docker.internal 在 Docker Desktop k8s 的 pod 內能否解析視版本而異;
+  # 若解析不到,改用 hostAliases 或把 host IP 填進來(見 k8s/README.md)。
+  DB_HOST: "host.docker.internal"
+  DB_PORT: "3307"
+  DB_NAME: "ticketdb"
+  REDIS_HOST: "host.docker.internal"
+  REDIS_PORT: "6380"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ticket-backend-secret
+type: Opaque
+stringData:
+  # 開發用明文;正式環境請用真正的 Secret 管理(External Secrets / Sealed Secrets),不進版控。
+  DB_USERNAME: "root"
+  DB_PASSWORD: "root"
+  JWT_SECRET: "change-me-this-is-a-dev-only-secret-key-32bytes!!"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-backend
+  labels:
+    app: ticket-backend
+spec:
+  replicas: 2                      # 起始 2,實際數量交給 HPA
+  selector:
+    matchLabels:
+      app: ticket-backend
+  template:
+    metadata:
+      labels:
+        app: ticket-backend
+    spec:
+      # 關機時間預算要容得下最壞情況:preStop(5s)+ web graceful(timeout-per-shutdown-phase 25s)
+      # + @Async executor 排空(await-termination-period 20s)= 50s,設 60s 留 buffer,
+      # 避免排空到一半被 SIGKILL 砍掉造成庫存回寫事件遺失。
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: ticket-backend
+          image: ticket-backend:local
+          imagePullPolicy: IfNotPresent      # 用本機 docker build 的 image,不從 registry pull
+          ports:
+            - containerPort: 8099
+          envFrom:
+            - configMapRef:
+                name: ticket-backend-config
+            - secretRef:
+                name: ticket-backend-secret
+          lifecycle:
+            preStop:
+              # 終止開始時 Service endpoint 反註冊是最終一致的,先睡幾秒讓 endpoint 移除,
+              # 避免關閉中的 pod 還被 kube-proxy 導入新連線(搶票結帳不希望掉請求)
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              # HPA 的「CPU 使用率 %」是相對這個 request 算的,必須設
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          # startupProbe:給 Spring Boot 冷啟動最多 startup*period = 30*5 = 150s,
+          # 期間 liveness 不啟動,避免慢啟動被誤殺成重啟迴圈
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8099
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8099
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8099
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ticket-backend                        # nginx proxy_pass http://ticket-backend:8099 對應這個名字
+spec:
+  type: ClusterIP
+  selector:
+    app: ticket-backend
+  ports:
+    - port: 8099
+      targetPort: 8099
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ticket-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ticket-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50               # 目標平均 CPU 50%(需 metrics-server 才有指標)

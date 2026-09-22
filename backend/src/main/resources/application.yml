@@ -1,10 +1,20 @@
 spring:
   application:
     name: ticket-system
+  lifecycle:
+    # 配合 server.shutdown=graceful:關機各階段最多等這麼久讓工作排空
+    timeout-per-shutdown-phase: 25s
+  task:
+    execution:
+      shutdown:
+        # server.shutdown=graceful 只排空 HTTP 請求,不等 @Async executor 佇列;
+        # 要真的避免縮容砍 pod 時庫存回寫事件遺失,必須讓 executor 關閉前等佇列排空
+        await-termination: true
+        await-termination-period: 20s
   datasource:
-    url: jdbc:mysql://localhost:3307/ticketdb?useSSL=false&serverTimezone=Asia/Taipei&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
-    username: root
-    password: root
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:ticketdb}?useSSL=false&serverTimezone=Asia/Taipei&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -14,14 +24,27 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
 
 server:
-  port: 8095
+  port: 8099
+  # graceful shutdown:縮容砍 pod 時,先停收新請求、等進行中的請求與 @Async 佇列排空
+  # (避免庫存回寫事件在 pod 被砍時遺失,見 docs/deployment/architecture.md 安全表)
+  shutdown: graceful
 
 jwt:
   # 開發用 secret，至少 32 bytes；正式環境請改用環境變數 JWT_SECRET
   secret: ${JWT_SECRET:change-me-this-is-a-dev-only-secret-key-32bytes!!}
   expiration: 3600
+
+ticket:
+  lock:
+    type: redisson        # redisson | manual
+    wait-millis: 200      # 大廠搶票常見值：fail-fast
+    lease-millis: 3000    # 業務通常 < 500ms，給 6x buffer
 
 logging:
   level:

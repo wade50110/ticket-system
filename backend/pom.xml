@@ -13,13 +13,15 @@
 
     <groupId>com.example</groupId>
     <artifactId>ticket-system</artifactId>
-    <version>0.1.0</version>
+    <version>0.3.0</version>
     <name>ticket-system</name>
-    <description>Ticket System - v0.1 Login</description>
+    <description>Ticket System - v0.3 Checkout / Redis Lock / Order</description>
 
     <properties>
         <java.version>17</java.version>
         <jjwt.version>0.12.5</jjwt.version>
+        <redisson.version>3.27.2</redisson.version>
+        <shedlock.version>5.13.0</shedlock.version>
     </properties>
 
     <dependencies>
@@ -44,6 +46,36 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <version>${redisson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aspects</artifactId>
+        </dependency>
+
+        <!-- ShedLock：多 pod 下讓 @Scheduled 只由一個實例執行（複用現有 Redis） -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-redis-spring</artifactId>
+            <version>${shedlock.version}</version>
         </dependency>
 
         <dependency>

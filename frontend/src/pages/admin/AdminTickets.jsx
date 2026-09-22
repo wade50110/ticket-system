@@ -7,6 +7,7 @@ const EMPTY_FORM = {
   description: '',
   price: '',
   stock: '',
+  purchaseLimit: '',
   visibleAt: '',
   visibleUntil: '',
 };
@@ -65,6 +66,7 @@ export default function AdminTickets() {
       description: ticket.description || '',
       price: ticket.price != null ? String(ticket.price) : '',
       stock: ticket.stock != null ? String(ticket.stock) : '',
+      purchaseLimit: ticket.purchaseLimit != null ? String(ticket.purchaseLimit) : '',
       visibleAt: toDatetimeLocal(ticket.visibleAt),
       visibleUntil: toDatetimeLocal(ticket.visibleUntil),
     });
@@ -90,6 +92,7 @@ export default function AdminTickets() {
       description: form.description.trim() || null,
       price: Number(form.price),
       stock: Number(form.stock),
+      purchaseLimit: form.purchaseLimit === '' ? null : Number(form.purchaseLimit),
       visibleAt: fromDatetimeLocal(form.visibleAt),
       visibleUntil: fromDatetimeLocal(form.visibleUntil),
     };
@@ -165,6 +168,17 @@ export default function AdminTickets() {
                 step="1"
               />
             </div>
+            <div className="form-group">
+              <label>每人限購</label>
+              <input
+                type="number"
+                value={form.purchaseLimit}
+                onChange={update('purchaseLimit')}
+                min="1"
+                step="1"
+                placeholder="不限"
+              />
+            </div>
           </div>
           <div className="form-row">
             <div className="form-group">
@@ -200,6 +214,7 @@ export default function AdminTickets() {
                 <th>名稱</th>
                 <th>售價</th>
                 <th>庫存</th>
+                <th>限購</th>
                 <th>上架</th>
                 <th>下架</th>
                 <th></th>
@@ -212,6 +227,7 @@ export default function AdminTickets() {
                   <td>{t.name}</td>
                   <td>${Number(t.price).toLocaleString()}</td>
                   <td>{t.stock}</td>
+                  <td>{t.purchaseLimit != null ? `${t.purchaseLimit} 張` : '不限'}</td>
                   <td>{formatDateTime(t.visibleAt)}</td>
                   <td>{formatDateTime(t.visibleUntil)}</td>
                   <td className="row-actions">

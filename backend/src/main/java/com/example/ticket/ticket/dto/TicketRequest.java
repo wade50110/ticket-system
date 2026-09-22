@@ -24,6 +24,10 @@ public class TicketRequest {
     @Min(0)
     private Integer stock;
 
+    /** 每帳號限購數；null = 不限購，不接受 0 或負數 */
+    @Min(1)
+    private Integer purchaseLimit;
+
     private LocalDateTime visibleAt;
 
     private LocalDateTime visibleUntil;

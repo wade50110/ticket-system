@@ -1,0 +1,52 @@
+# 前端:nginx(serve CSR 靜態檔 + 反代 /api)。Deployment + Service。
+# 固定 2 副本做高可用,不掛 HPA——CSR 發靜態檔負載極低,不需依負載 autoscale
+# (理由見 docs/deployment/architecture.md「前端為什麼不需要 autoscale」)。
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-frontend
+  labels:
+    app: ticket-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ticket-frontend
+  template:
+    metadata:
+      labels:
+        app: ticket-frontend
+    spec:
+      containers:
+        - name: nginx
+          image: ticket-frontend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ticket-frontend
+spec:
+  # Docker Desktop k8s 的 LoadBalancer 會綁到 localhost:80,瀏覽器開 http://localhost 即可
+  type: LoadBalancer
+  selector:
+    app: ticket-frontend
+  ports:
+    - port: 80
+      targetPort: 80

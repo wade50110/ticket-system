@@ -1,13 +1,15 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { getCurrentUser, logout } from '../api/auth.js';
 
 export default function AppLayout({ title, children, rightSlot }) {
-  const navigate = useNavigate();
   const user = getCurrentUser();
 
   function handleLogout() {
     logout();
-    navigate('/login');
+    // 用 location.replace 取代 react-router 的 navigate：
+    // 1. 觸發完整的瀏覽器導向，當前頁面不會被放進 bfcache
+    // 2. 替換掉目前 history entry，防止使用者按上一頁回到登入後的頁面
+    window.location.replace('/login');
   }
 
   return (
@@ -22,6 +24,7 @@ export default function AppLayout({ title, children, rightSlot }) {
             <>
               <Link to="/shop" className="nav-link">商城</Link>
               <Link to="/cart" className="nav-link">購物車</Link>
+              <Link to="/orders" className="nav-link">我的訂單</Link>
             </>
           )}
         </div>

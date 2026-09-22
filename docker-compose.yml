@@ -15,5 +15,15 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
 
+  redis:
+    image: redis:7-alpine
+    container_name: ticket-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - ticket-redis-data:/data
+
 volumes:
   ticket-mysql-data:
+  ticket-redis-data:
