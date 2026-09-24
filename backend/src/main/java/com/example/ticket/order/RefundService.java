@@ -2,6 +2,7 @@ package com.example.ticket.order;
 
 import com.example.ticket.checkout.StockChangedEvent;
 import com.example.ticket.checkout.StockRestoredEvent;
+import com.example.ticket.metrics.TicketMetrics;
 import com.example.ticket.order.dto.OrderResponse;
 import com.example.ticket.payment.PaymentResult;
 import com.example.ticket.payment.PaymentService;
@@ -37,6 +38,7 @@ public class RefundService {
     private final QuotaRedisRepository quotaRedis;
     private final PaymentService paymentService;
     private final ApplicationEventPublisher eventPublisher;
+    private final TicketMetrics metrics;
 
     public OrderResponse refund(Long userId, Long orderId) {
         Order order = orderRepo.findWithItemsById(orderId)
@@ -47,12 +49,14 @@ public class RefundService {
             throw new IllegalArgumentException("訂單不存在");
         }
         if (order.getStatus() != OrderStatus.PAID) {
+            metrics.recordRefundFail();
             throw new RefundException("只有已付款的訂單可以退票");
         }
 
         // 1. Mock 退款（無實際副作用，僅產生交易序號）
         PaymentResult refund = paymentService.refund(orderId, order.getTotalAmount());
         if (!refund.success()) {
+            metrics.recordRefundFail();
             throw new RefundException("退款失敗：" + refund.message());
         }
 
@@ -61,8 +65,11 @@ public class RefundService {
         // 2. 原子狀態翻轉：PAID -> REFUNDED。updated == 0 代表被別的請求先退掉了。
         int updated = orderRepo.markRefunded(orderId, now, refund.transactionId());
         if (updated == 0) {
+            metrics.recordRefundFail();
             throw new RefundException("訂單已退票或目前狀態無法退票");
         }
+        // markRefunded 翻轉成功後才計成功(F-7)
+        metrics.recordRefundSuccess();
 
         // 3. Redis 立即釋放庫存（正源），並釋回限購額度（Lua 夾 0，不得產生負值）
         List<StockChangedEvent.Change> changes = new ArrayList<>();

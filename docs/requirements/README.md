@@ -22,3 +22,4 @@ requirements/
 ## 現有版本
 
 - [`v0.5/`](v0.5/) — 防黃牛與流量控制(限購 ✅、訂單取消、rate limit)
+- [`v0.6/`](v0.6/) — 可觀測性/監控(Prometheus + Grafana ✅ 已完成,現況見 [`../monitoring.md`](../monitoring.md))

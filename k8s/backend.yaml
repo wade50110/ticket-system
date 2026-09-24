@@ -41,6 +41,12 @@ spec:
     metadata:
       labels:
         app: ticket-backend
+      annotations:
+        # v0.6 監控:Prometheus 依這組註解自動發現後端 pod 並抓 /actuator/prometheus(F-14 / 決策 #9)。
+        # HPA 擴縮出的新 pod 帶同樣註解,自動被納入抓取,免改 Prometheus 設定。
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8099"
     spec:
       # 關機時間預算要容得下最壞情況:preStop(5s)+ web graceful(timeout-per-shutdown-phase 25s)
       # + @Async executor 排空(await-termination-period 20s)= 50s,設 60s 留 buffer,

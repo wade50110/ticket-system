@@ -88,6 +88,10 @@ kubectl run load --image=williamyeh/hey --restart=Never -- `
 
 觀察:backend 平均 CPU 上升 → HPA 幾十秒內把 replicas 從 2 往上拉 → 新 pod 起來分攤。停止壓測後約 5 分鐘冷卻 → 縮回 2。清理:`kubectl delete pod load`。
 
+## 監控(v0.6,選用)
+
+Prometheus + Grafana 的部署與驗證見 [`monitoring/README.md`](monitoring/README.md)。app 起來後 `kubectl apply -f k8s/monitoring/`,開 **http://localhost:3000**(admin/admin)看「搶票總覽」儀表板(RPS、p99、結帳成功/失敗、超賣防護、HPA 副本數、每 pod CPU)。後端 image 需含 v0.6 指標程式(改過後端要重 build + `rollout restart`)。
+
 ## 疑難排解
 
 ### backend pod CrashLoop / 連不到 DB 或 Redis

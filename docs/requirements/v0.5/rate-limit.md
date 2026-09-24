@@ -30,7 +30,7 @@
 
 - 端點覆寫命中時**只計覆寫規則**,不重複計入全域(一個請求只被一條規則計數)。
 - 429 回應:JSON 格式對齊 `GlobalExceptionHandler` 既有錯誤格式(**欄位名是 `error`**,前端 `http.js` 只讀 `data.error`),並帶 `Retry-After` header(秒)。實作註記:Filter 在 MVC 之外,`@RestControllerAdvice` 不會參與,需在 Filter 內手動組 response(ObjectMapper 寫 JSON、`Content-Type: application/json;charset=UTF-8`——中文訊息勿漏 charset)。
-- 排除清單:`GET /api/health` 不限流(監控/探活用)。
+- 排除清單:`GET /api/health`、`GET /actuator/prometheus` 不限流(探活/監控用)。其中 `/actuator/prometheus` 供 v0.6 監控的 Prometheus scrape,若不排除,匿名 per-IP 計數可能對 scrape 回 429 造成 target 抖動(見 [../v0.6/monitoring.md](../v0.6/monitoring.md) §10)。
 - 前端:`api/http.js` 統一攔截 429,顯示「操作太頻繁,請稍後再試」。
 
 ## 3. API 規格
@@ -74,7 +74,7 @@ HTTP 429, Retry-After: {秒}
 - AC-3:不同 user、不同 IP 計數互相隔離。
 - AC-4:視窗過期後計數重置,恢復可用。
 - AC-5:命中端點覆寫的請求不重複計入全域額度。
-- AC-6:`GET /api/health` 完全不受限。
+- AC-6:`GET /api/health`、`GET /actuator/prometheus` 完全不受限。
 - AC-7:Redis 不可用時請求放行(fail-open)且有 error log。
 - AC-8:429 回應格式與全域錯誤格式一致;前端顯示友善訊息。
 - AC-9:調整設定檔數值/新增規則後(重啟生效)行為隨之改變,不需改程式。

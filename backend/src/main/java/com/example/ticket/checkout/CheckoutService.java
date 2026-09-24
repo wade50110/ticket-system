@@ -5,6 +5,7 @@ import com.example.ticket.cart.CartItemRepository;
 import com.example.ticket.lock.DistributedLock;
 import com.example.ticket.lock.LockHandle;
 import com.example.ticket.lock.LockProperties;
+import com.example.ticket.metrics.TicketMetrics;
 import com.example.ticket.order.Order;
 import com.example.ticket.order.OrderItem;
 import com.example.ticket.order.OrderRepository;
@@ -46,6 +47,7 @@ public class CheckoutService {
     private final LockProperties lockProps;
     private final PaymentService paymentService;
     private final ApplicationEventPublisher eventPublisher;
+    private final TicketMetrics metrics;
 
     public OrderResponse checkout(Long userId) {
         // 1. 讀購物車
@@ -79,7 +81,7 @@ public class CheckoutService {
                         lockProps.leaseTime()
                 );
                 if (!h.isLocked()) {
-                    throw new CheckoutException("搶票人潮過多，請稍後再試");
+                    throw new CheckoutException("搶票人潮過多，請稍後再試", CheckoutException.Reason.LOCK_FAILED);
                 }
                 acquired.add(h);
             }
@@ -91,7 +93,7 @@ public class CheckoutService {
                         c.getTicketId(), userId, c.getQuantity(), t.getPurchaseLimit());
                 if (result == null || result == StockRedisRepository.RESULT_KEY_MISSING) {
                     rollback(userId, decremented);
-                    throw new CheckoutException("票券「" + t.getName() + "」已下架");
+                    throw new CheckoutException("票券「" + t.getName() + "」已下架", CheckoutException.Reason.SOLD_OUT);
                 }
                 if (result == QuotaRedisRepository.RESULT_QUOTA_EXCEEDED) {
                     int held = quotaRedis.getHeld(c.getTicketId(), userId);
@@ -99,14 +101,17 @@ public class CheckoutService {
                     rollback(userId, decremented);
                     throw new CheckoutException(
                             "超過限購數量：「" + t.getName() + "」每人限購 " + t.getPurchaseLimit()
-                                    + " 張，你還可購買 " + remainingQuota + " 張");
+                                    + " 張，你還可購買 " + remainingQuota + " 張",
+                            CheckoutException.Reason.QUOTA_EXCEEDED);
                 }
                 if (result == StockRedisRepository.RESULT_INSUFFICIENT) {
                     Integer remaining = stockRedis.get(c.getTicketId());
+                    safeMetric(metrics::recordOversellStockInsufficient);
                     rollback(userId, decremented);
                     throw new CheckoutException(
                             "票券「" + t.getName()
-                                    + "」庫存不足，剩餘 " + (remaining == null ? 0 : remaining) + " 張");
+                                    + "」庫存不足，剩餘 " + (remaining == null ? 0 : remaining) + " 張",
+                            CheckoutException.Reason.SOLD_OUT);
                 }
                 decremented.add(new StockChangedEvent.Change(c.getTicketId(), c.getQuantity()));
             }
@@ -188,7 +193,21 @@ public class CheckoutService {
      * 回滾已扣的庫存與已累計的限購額度。
      * 兩步非原子（先回庫存、再釋回額度）：中間態只會讓併發請求短暫誤判 409，方向保守不會超賣/超限。
      */
+    /**
+     * 指標埋點的呼叫端保護:即使 metrics 實作意外拋例外,也不得逸出到臨界區的
+     * {@code catch(RuntimeException)} 而把 reason 退化成 OTHER、或多跑一次回滾(monitoring.md F-5)。
+     * 與 {@link TicketMetrics} 內部的 safe 形成 defense-in-depth。
+     */
+    private static void safeMetric(Runnable action) {
+        try {
+            action.run();
+        } catch (RuntimeException ignored) {
+            // 指標失敗絕不影響結帳流程
+        }
+    }
+
     private void rollback(Long userId, List<StockChangedEvent.Change> decremented) {
+        safeMetric(metrics::recordRollback);
         for (StockChangedEvent.Change c : decremented) {
             try {
                 stockRedis.increment(c.ticketId(), c.quantity());

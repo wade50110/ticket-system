@@ -35,6 +35,19 @@ server:
   # (避免庫存回寫事件在 pod 被砍時遺失,見 docs/deployment/architecture.md 安全表)
   shutdown: graceful
 
+# v0.6 監控:Actuator + Micrometer(見 docs/requirements/v0.6/monitoring.md)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus          # 只暴露 /actuator/prometheus;k8s probe 仍用既有 /api/health
+  metrics:
+    tags:
+      application: ticket-system     # 所有指標帶 application 共同標籤
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true   # server-side 直方圖,Prometheus 用 histogram_quantile 跨 pod 算 p99
+
 jwt:
   # 開發用 secret，至少 32 bytes；正式環境請改用環境變數 JWT_SECRET
   secret: ${JWT_SECRET:change-me-this-is-a-dev-only-secret-key-32bytes!!}

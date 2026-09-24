@@ -23,6 +23,10 @@ import static org.mockito.Mockito.*;
  * 購物車的限購預檢（v0.5-purchase-limit AC-9）：
  * 目前持有 + 購物車內同票數量（含本次）不得超過限購數；僅友善提示、不佔額度。
  */
+
+/**
+ * MockitoExtension: 当你使用 Mockito 进行单元测试时，MockitoExtension 通过 @ExtendWith 注解可以自动管理 @Mock 注解和 @InjectMocks 的对象。
+ */
 @ExtendWith(MockitoExtension.class)
 class CartServicePurchaseLimitTest {
 

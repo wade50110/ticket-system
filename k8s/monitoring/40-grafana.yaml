@@ -1,0 +1,222 @@
+# Grafana:儀表板。provision as code(決策 #6):自動帶 Prometheus 資料源 + 「搶票總覽」儀表板。
+# 對外用 LoadBalancer → http://localhost:3000(決策 #5);dev 帳密 admin/admin 放 Secret(決策 #7)。
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin
+  namespace: monitoring
+type: Opaque
+stringData:
+  admin-user: admin
+  admin-password: admin          # 僅本機 dev(決策 #7);正式環境請改
+---
+# 資料源:指向叢集內的 Prometheus Service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+---
+# 儀表板 provider:告訴 Grafana 去 /var/lib/grafana/dashboards 載入 JSON
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: ticket-system
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+---
+# 「搶票總覽」儀表板(AC-7 要看的都在):RPS、p99、結帳成功/失敗依原因、超賣防護、HPA 副本數、每 pod CPU
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-ticket
+  namespace: monitoring
+data:
+  ticket-overview.json: |
+    {
+      "uid": "ticket-overview",
+      "title": "搶票總覽 (ticket-system)",
+      "tags": ["ticket-system"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "10s",
+      "time": { "from": "now-15m", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "請求 RPS(/api/checkout)",
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(http_server_requests_seconds_count{uri=\"/api/checkout\"}[1m]))", "legendFormat": "checkout rps" },
+            { "refId": "B", "expr": "sum(rate(http_server_requests_seconds_count[1m]))", "legendFormat": "all rps" }
+          ]
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "結帳延遲 p50 / p99(跨 pod histogram_quantile)",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum(rate(ticket_checkout_duration_seconds_bucket[1m])) by (le))", "legendFormat": "p99" },
+            { "refId": "B", "expr": "histogram_quantile(0.50, sum(rate(ticket_checkout_duration_seconds_bucket[1m])) by (le))", "legendFormat": "p50" }
+          ]
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "結帳結果(成功 / 失敗依原因,每秒)",
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(ticket_checkout_total[1m])) by (result, reason)", "legendFormat": "{{result}} {{reason}}" }
+          ]
+        },
+        {
+          "id": 4, "type": "timeseries", "title": "超賣防護觸發 / 補償回滾(每秒)",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(ticket_oversell_guard_total[1m])) by (type)", "legendFormat": "{{type}}" }
+          ]
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "後端副本數(HPA 擴縮)",
+          "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "kube_deployment_status_replicas{namespace=\"default\", deployment=\"ticket-backend\"}", "legendFormat": "replicas" },
+            { "refId": "B", "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"default\", horizontalpodautoscaler=\"ticket-backend\"}", "legendFormat": "hpa current" }
+          ]
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "每 pod CPU(cores,cAdvisor pod 層級 cgroup)",
+          "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"default\", pod=~\"ticket-backend.*\", container=\"\"}[1m])) by (pod)", "legendFormat": "{{pod}}" }
+          ]
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "JVM heap 使用(每 pod)",
+          "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum(jvm_memory_used_bytes{area=\"heap\"}) by (pod)", "legendFormat": "{{pod}}" }
+          ]
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "退票結果(每秒)",
+          "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(ticket_refund_total[1m])) by (result)", "legendFormat": "{{result}}" }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.4.5
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboard-ticket
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  # Docker Desktop 的 LoadBalancer 綁到 localhost:3000 → 瀏覽器開 http://localhost:3000(決策 #5)
+  type: LoadBalancer
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000

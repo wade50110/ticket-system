@@ -1,0 +1,200 @@
+# Prometheus(精簡版手寫,見 docs/requirements/v0.6/monitoring.md F-10 / F-12 / F-15)
+# - emptyDir 不持久(pod 重啟即清,決策 #3)、scrape 15s、retention 3h(控磁碟量;記憶體靠 limits 與系列數)、設 resources(決策 #15)
+# - 自己一組最小權限 RBAC:kubernetes_sd + 經 apiserver proxy 抓 kubelet/cAdvisor(只需 nodes/proxy get,決策 #16/#22)
+# - 改了 scrape config(ConfigMap)後:kubectl rollout restart -n monitoring deployment/prometheus(emptyDir 會清歷史,dev 可接受)
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  # kubernetes_sd(pod / node / endpoints 角色)所需
+  - apiGroups: [""]
+    resources: ["nodes", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  # 經 apiserver proxy 抓 kubelet/cAdvisor 只需 nodes/proxy 的 get(最小權限)。
+  # 不直連 kubelet,故不需 nodes/metrics 與 nonResourceURLs /metrics*。
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s          # 決策 #15/#17:≈4 次/分,遠低於 rate-limit 60/分
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Prometheus 自身
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # 後端 pod:依 pod 註解自動發現(prometheus.io/scrape=true、path、port)。
+      # HPA 擴縮時新 pod 自動被抓,免改此設定(F-14 / 決策 #9)。
+      # 限 default namespace + app=ticket-backend,避免日後其他帶註解的 exporter 混進此 job。
+      - job_name: ticket-backend
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [default]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: ticket-backend
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+
+      # kubelet cAdvisor:每 pod CPU/mem。經 apiserver proxy 抓(需 ClusterRole nodes/proxy)。
+      # 走 apiserver 而非直連 kubelet:apiserver 憑證 SAN 含 kubernetes.default.svc、pod 內掛載的 ca.crt 即叢集 CA,
+      # 用它正常驗證即可,不需 insecure_skip_verify(決策 #21)。
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+      # kube-state-metrics:物件狀態(Deployment 副本數、HPA 現值 → 儀表板「副本數隨 HPA 上升」)
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
+
+      # node-exporter:節點 OS 資源(Docker Desktop 上是 LinuxKit VM,非 Windows 主機)。
+      # 註:v1 Endpoints API 自 k8s 1.33 標記棄用(目前僅 log 警告、功能正常);日後可改 role: endpointslice
+      # (ClusterRole 需加 discovery.k8s.io/endpointslices list/watch)。
+      - job_name: node-exporter
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [monitoring]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: node-exporter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534            # prometheus image 以 nobody 執行,讓 emptyDir 可寫
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=3h     # 決策 #15(控磁碟;記憶體靠 limits 與系列數,可觀察 prometheus_tsdb_head_series)
+            # 不開 --web.enable-lifecycle:它會暴露未認證的 /-/quit 與 /-/reload 給叢集內任何 pod(決策 #22)。
+            # 改 scrape config 後用 kubectl rollout restart。
+          ports:
+            - containerPort: 9090
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}              # 不持久(決策 #3):監控資料非正源,重啟即清
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  type: ClusterIP                   # 叢集內用;要看 UI 用 kubectl port-forward(F-17)
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090

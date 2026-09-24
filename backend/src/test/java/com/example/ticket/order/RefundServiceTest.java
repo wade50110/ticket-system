@@ -1,15 +1,17 @@
 package com.example.ticket.order;
 
 import com.example.ticket.checkout.StockRestoredEvent;
+import com.example.ticket.metrics.TicketMetrics;
 import com.example.ticket.order.dto.OrderResponse;
 import com.example.ticket.payment.PaymentResult;
 import com.example.ticket.payment.PaymentService;
 import com.example.ticket.stock.QuotaRedisRepository;
 import com.example.ticket.stock.StockRedisRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -39,11 +41,19 @@ class RefundServiceTest {
     @Mock
     ApplicationEventPublisher eventPublisher;
 
-    @InjectMocks
     RefundService refundService;
+    SimpleMeterRegistry registry;
+    TicketMetrics metrics;
 
     private static final long USER_ID = 10L;
     private static final long ORDER_ID = 1L;
+
+    @BeforeEach
+    void setUp() {
+        registry = new SimpleMeterRegistry();
+        metrics = new TicketMetrics(registry);
+        refundService = new RefundService(orderRepo, stockRedis, quotaRedis, paymentService, eventPublisher, metrics);
+    }
 
     private Order paidOrder() {
         Order order = Order.builder()
@@ -89,6 +99,9 @@ class RefundServiceTest {
         verify(eventPublisher).publishEvent(captor.capture());
         assertEquals(ORDER_ID, captor.getValue().orderId());
         assertEquals(2, captor.getValue().changes().size());
+
+        // 退票成功計數 +1（monitoring.md F-3）
+        assertEquals(1.0, registry.get("ticket_refund_total").tag("result", "success").counter().count(), 0.0001);
     }
 
     @Test
@@ -125,6 +138,8 @@ class RefundServiceTest {
 
         verify(paymentService, never()).refund(anyLong(), any());
         verify(stockRedis, never()).increment(anyLong(), anyInt());
+        // 退票失敗計數 +1（monitoring.md F-3）
+        assertEquals(1.0, registry.get("ticket_refund_total").tag("result", "fail").counter().count(), 0.0001);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.example.ticket.config;
 
 import com.example.ticket.auth.JwtAuthFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.actuate.autoconfigure.security.servlet.EndpointRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -38,6 +39,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
+                        // v0.6 監控:只放行 Prometheus scrape 端點,匿名可讀(供叢集內 Prometheus 抓取)
+                        .requestMatchers(EndpointRequest.to("prometheus")).permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/cart/**").hasRole("CUSTOMER")
                         .requestMatchers("/api/checkout/**").hasRole("CUSTOMER")

@@ -1,0 +1,10 @@
+# v0.6 監控:所有監控元件放獨立 monitoring namespace(決策 #8),與 app(default)分離。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    # node-exporter 需要 hostNetwork/hostPID/hostPath,在啟用 Pod Security Admission(baseline/restricted)
+    # 的叢集會被擋。明示此 namespace 允許 privileged,讓需求外顯。
+    # Docker Desktop 預設未強制 PSA,此標籤不影響現況;搬到雲上可少一個「DaemonSet 起不來」的坑。
+    pod-security.kubernetes.io/enforce: privileged

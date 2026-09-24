@@ -25,6 +25,7 @@
 | 快取 / 分散式鎖 | Redis 7 + Redisson 3.27.2(可切手刻 Lua 版) |
 | 非同步 / 重試 | spring-retry + spring-aspects(`@Async` / `@Retryable` / `@Scheduled`) |
 | 輔助 | Lombok |
+| 監控(v0.6) | Spring Boot Actuator + Micrometer(`micrometer-registry-prometheus`)→ `/actuator/prometheus`;k8s 上 Prometheus + Grafana(`k8s/monitoring/`) |
 | 測試 | spring-boot-starter-test、spring-security-test |
 
 ### 前端 `frontend/`(npm)
@@ -67,7 +68,8 @@
 - ✅ v0.2:票券 CRUD(admin)、商城瀏覽、購物車
 - ✅ v0.3:Redis 庫存正源、可切換分散式鎖、Lua 原子扣減結帳、Mock 付款、訂單/明細查詢、庫存回寫 DB 的補償機制
 - 🔨 v0.4(進行中):✅ 🅐 訂單退票(前後端含測試皆完成);❌ 🅑 票券圖片、🅒 UI 改版、🅓 搶票排隊 尚未開始
-- ❌ v0.5+(尚未做):真實金流、防黃牛限購、Docker 化後端、Jenkins/AWS 部署
+- ✅ v0.5(部分):防黃牛限購;✅ 容器化 + Nginx + k8s + HPA(見 `docs/deployment/`);✅ v0.6 監控 Prometheus + Grafana(見 `docs/monitoring.md`)
+- ❌ 尚未做:v0.5 訂單取消、rate limit(需求書已定稿);真實金流;Jenkins/AWS 部署
 
 各版本詳細規格見 `version0.1.md` / `version0.2.md` / `version0.3.md`;**各模組現況規格見 `docs/`(見第十一節,改功能前先讀對應模組的 spec)**。
 
@@ -137,6 +139,7 @@ frontend/src/
 | GET | `/api/orders`、`/api/orders/{id}` | CUSTOMER | 查自己的訂單/明細 |
 | POST | `/api/orders/{id}/refund` | CUSTOMER | 退票(僅 PAID、僅本人、整筆退) |
 | POST | `/api/admin/stock-sync/retry` | ADMIN | 手動觸發庫存回寫重試 |
+| GET | `/actuator/prometheus` | 公開 | Prometheus 指標(v0.6;actuator 只暴露此端點,`/actuator/health`、`/env` 等匿名 403) |
 
 ---
 
@@ -192,6 +195,8 @@ docker build -t ticket-frontend:local ./frontend
 kubectl apply -f k8s/backend.yaml
 kubectl apply -f k8s/frontend.yaml
 # 開 http://localhost 就是完整系統
+# 4) (選用) v0.6 監控:Prometheus + Grafana,開 http://localhost:3000(admin/admin)看「搶票總覽」
+kubectl apply -f k8s/monitoring/            # 細節與驗證見 k8s/monitoring/README.md
 ```
 
 > ⚠️ **改程式碼後重新部署**:image tag 固定為 `:local` 且 `imagePullPolicy: IfNotPresent`,所以「重 build image + 重 apply」**不會**讓運行中的 pod 換版(Deployment spec 沒變不觸發 rollout,舊 pod 繼續跑舊 code)。重 build 後要手動觸發:`kubectl rollout restart deployment ticket-backend`(或 `ticket-frontend`)。
@@ -244,6 +249,7 @@ kubectl apply -f k8s/frontend.yaml
 | 庫存與鎖(核心) | [`docs/inventory.md`](docs/inventory.md) | Redis 正源、Lua 原子扣減、分散式鎖 |
 | 結帳(核心) | [`docs/checkout.md`](docs/checkout.md) | 搶購主流程、回滾、DB 回寫補償、付款 |
 | 訂單與退票 | [`docs/order.md`](docs/order.md) | 訂單狀態機、查詢、退票(v0.4) |
+| 監控(v0.6) | [`docs/monitoring.md`](docs/monitoring.md) | Prometheus/Grafana 部署、`/actuator/prometheus`、自訂業務指標與**埋點硬約束**(改結帳/退票埋點前必讀) |
 
 每份 spec 固定包含:現況規格、檔案地圖、設計意圖(不要動的理由)、已知邊界情況、已知問題/技術債、測試現況。**規格變更時直接更新對應 spec,不要另開新文件**;變更歷史交給 git。
 

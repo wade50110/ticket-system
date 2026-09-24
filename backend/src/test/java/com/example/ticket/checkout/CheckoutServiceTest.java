@@ -5,6 +5,7 @@ import com.example.ticket.cart.CartItemRepository;
 import com.example.ticket.lock.DistributedLock;
 import com.example.ticket.lock.LockHandle;
 import com.example.ticket.lock.LockProperties;
+import com.example.ticket.metrics.TicketMetrics;
 import com.example.ticket.order.Order;
 import com.example.ticket.order.OrderRepository;
 import com.example.ticket.order.OrderStatus;
@@ -23,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.context.ApplicationEventPublisher;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -53,13 +55,17 @@ class CheckoutServiceTest {
     @Mock LockHandle lockHandle;
 
     CheckoutService checkoutService;
+    SimpleMeterRegistry registry;
+    TicketMetrics metrics;
 
     private static final long USER_ID = 10L;
 
     @BeforeEach
     void setUp() {
+        registry = new SimpleMeterRegistry();
+        metrics = new TicketMetrics(registry);
         checkoutService = new CheckoutService(cartRepo, ticketRepo, orderRepo, stockRedis,
-                quotaRedis, distributedLock, lockProps, paymentService, eventPublisher);
+                quotaRedis, distributedLock, lockProps, paymentService, eventPublisher, metrics);
         when(lockProps.waitTime()).thenReturn(java.time.Duration.ofMillis(200));
         when(lockProps.leaseTime()).thenReturn(java.time.Duration.ofMillis(3000));
         when(distributedLock.tryLock(anyString(), any(), any())).thenReturn(lockHandle);
@@ -92,6 +98,7 @@ class CheckoutServiceTest {
         assertTrue(ex.getMessage().contains("超過限購數量"), ex.getMessage());
         assertTrue(ex.getMessage().contains("限購票"), ex.getMessage());
         assertTrue(ex.getMessage().contains("你還可購買 0 張"), ex.getMessage());
+        assertEquals(CheckoutException.Reason.QUOTA_EXCEEDED, ex.getReason());
 
         // 已扣的第一張票：庫存與額度都要回補
         verify(stockRedis).increment(1L, 2);
@@ -117,8 +124,14 @@ class CheckoutServiceTest {
                 () -> checkoutService.checkout(USER_ID));
 
         assertTrue(ex.getMessage().contains("庫存不足"), ex.getMessage());
+        assertEquals(CheckoutException.Reason.SOLD_OUT, ex.getReason());
         verify(stockRedis).increment(1L, 2);
         verify(quotaRedis).release(1L, USER_ID, 2);
+        // 超賣防護觸發:stock_insufficient +1、rollback +1(monitoring.md AC-3）
+        assertEquals(1.0, registry.get("ticket_oversell_guard_total")
+                .tag("type", "stock_insufficient").counter().count(), 0.0001);
+        assertEquals(1.0, registry.get("ticket_oversell_guard_total")
+                .tag("type", "rollback").counter().count(), 0.0001);
     }
 
     @Test
@@ -148,5 +161,32 @@ class CheckoutServiceTest {
         verify(quotaRedis, never()).release(anyLong(), anyLong(), anyInt());
         verify(cartRepo).deleteByUserId(USER_ID);
         verify(eventPublisher).publishEvent(any(StockChangedEvent.class));
+    }
+
+    // F-5 臨界區保護:in-lock 指標埋點若拋例外,不得被 checkout 的 catch(RuntimeException) 接住
+    // 而把 SOLD_OUT 退化成 OTHER、或多跑一次回滾(用 mock metrics 模擬指標系統故障)。
+    @Test
+    void checkout_inLockMetricThrows_keepsSoldOutReason_andRollsBackOnce() {
+        TicketMetrics throwing = mock(TicketMetrics.class);
+        doThrow(new RuntimeException("metric boom")).when(throwing).recordOversellStockInsufficient();
+        CheckoutService svc = new CheckoutService(cartRepo, ticketRepo, orderRepo, stockRedis,
+                quotaRedis, distributedLock, lockProps, paymentService, eventPublisher, throwing);
+
+        when(cartRepo.findByUserIdOrderByIdAsc(USER_ID))
+                .thenReturn(List.of(cartItem(1L, 2), cartItem(2L, 3)));
+        when(ticketRepo.findAllById(List.of(1L, 2L)))
+                .thenReturn(List.of(ticket(1L, "票A", 4), ticket(2L, "票B", null)));
+        when(quotaRedis.tryDecrementStockWithQuota(1L, USER_ID, 2, 4)).thenReturn(8L);
+        when(quotaRedis.tryDecrementStockWithQuota(2L, USER_ID, 3, null))
+                .thenReturn(StockRedisRepository.RESULT_INSUFFICIENT);
+        when(stockRedis.get(2L)).thenReturn(1);
+
+        CheckoutException ex = assertThrows(CheckoutException.class, () -> svc.checkout(USER_ID));
+
+        // 指標例外不得把原因退化成 OTHER
+        assertEquals(CheckoutException.Reason.SOLD_OUT, ex.getReason());
+        // 第一張票只回補一次(沒有因指標例外二次回滾)
+        verify(stockRedis, times(1)).increment(1L, 2);
+        verify(quotaRedis, times(1)).release(1L, USER_ID, 2);
     }
 }
