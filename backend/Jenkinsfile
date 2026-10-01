@@ -14,7 +14,7 @@ pipeline {
 
     parameters {
         string(name: 'BRANCH', defaultValue: 'main',
-               description: '要建置的分支;非 main 只切換內容(Jenkinsfile 與腳本仍來自 main),不影響輪詢,會把該分支部署到本機 k8s。')
+               description: '要建置的分支;非 main 時以該分支的內容(含 ci/jenkins/scripts)建置,Jenkinsfile 本身仍由 main 載入,不影響輪詢;會把該分支部署到本機 k8s。')
     }
 
     environment {
@@ -33,7 +33,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                checkout scm   // 永遠先抓 main:取得 Jenkinsfile/腳本,並維持輪詢基準
+                checkout scm   // 永遠先抓 main(載入 Jenkinsfile、維持輪詢基準);BRANCH≠main 時再把工作樹切到該分支
                 script {
                     if (!(params.BRANCH ==~ /[A-Za-z0-9._\/-]+/)) {
                         error("BRANCH 不合法:${params.BRANCH}")
@@ -121,7 +121,8 @@ pipeline {
                     # 保護 Deployment 既存 ReplicaSet 引用的 image(rollout undo 任一版都要有 image)
                     protect=$(kubectl get rs -l app="$APP_LABEL" \
                         -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{"\\n"}{end}' \
-                        | sed -n "s#^$IMAGE:##p" | sort -u | tr '\\n' ' ')
+                        | sed -n "s#^$IMAGE:##p" | sort -u | tr '\\n' ' ') \
+                        || { echo "取不到 ReplicaSet 清單(kubectl 失敗),為安全起見略過本次 image 清理"; exit 0; }
                     bash ci/jenkins/scripts/prune-images.sh "$IMAGE" "$KEEP_IMAGES" $protect
                 '''
             }

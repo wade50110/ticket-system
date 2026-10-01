@@ -18,7 +18,12 @@ current_image() {
 }
 
 prev_img=$(current_image)
-echo "== Deploy $dep/$ctr:$prev_img → $img(timeout $timeout)"
+replicas=$(kubectl get deployment "$dep" -o jsonpath='{.spec.replicas}')
+if [ "${replicas:-0}" -le 0 ]; then
+    echo "::Deployment $dep 的 replicas=0:新版不會真的啟動、rollout status 會假成功,無法驗證;請先 scale 回來再部署"
+    exit 1
+fi
+echo "== Deploy $dep/$ctr:$prev_img → $img(timeout $timeout,replicas $replicas)"
 
 if ! kubectl set image "deployment/$dep" "$ctr=$img"; then
     echo "::set image 失敗(Deployment/container 名稱或 RBAC?)"
@@ -43,6 +48,12 @@ for p in $not_ready; do
     kubectl describe pod "$p" | tail -n 40 || true
     echo "---- logs $p(最後 50 行)----"
     kubectl logs "$p" --all-containers --tail=50 2>&1 || true
+    # CrashLoop 的當前容器 log 常是空的,補上一次重啟前的 log
+    if kubectl logs "$p" --previous --all-containers --tail=50 > /tmp/prev-log.$$ 2>/dev/null && [ -s /tmp/prev-log.$$ ]; then
+        echo "---- logs $p --previous(重啟前,最後 50 行)----"
+        cat /tmp/prev-log.$$
+    fi
+    rm -f /tmp/prev-log.$$
 done
 
 echo "== kubectl rollout undo deployment/$dep =="

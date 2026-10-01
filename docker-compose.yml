@@ -52,6 +52,7 @@ services:
       # 由 scripts/ci-bootstrap.ps1 產生(jenkins-deployer SA 的最小權限 token);不進版控
       - ./ci/jenkins/secrets/kubeconfig:/etc/jenkins/kubeconfig:ro
     mem_limit: 4g
+    memswap_limit: 4g      # 與 mem_limit 相同 = 不給 swap,避免「保護主機」被 swap 抵銷
 
 volumes:
   ticket-mysql-data:

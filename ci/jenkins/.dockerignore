@@ -1,0 +1,4 @@
+# build context 只需要 Dockerfile、plugins.txt、casc.yaml、jobs.groovy
+secrets/
+scripts/
+README.md

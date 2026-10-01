@@ -31,7 +31,7 @@ pipelines.each { p ->
         quietPeriod(0)
         parameters {
             stringParam('BRANCH', 'main',
-                '要建置的分支。預設 main;非 main 只切換建置內容(Jenkinsfile 與腳本仍來自 main),不影響輪詢,且會把該分支部署到本機 k8s(驗證/預覽用)。')
+                '要建置的分支。預設 main;非 main 時以該分支的內容(含 ci/jenkins/scripts)建置,Jenkinsfile 本身仍由 main 載入,不影響輪詢;會把該分支部署到本機 k8s(驗證/預覽用)。')
         }
         properties {
             disableConcurrentBuilds()

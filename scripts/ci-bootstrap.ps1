@@ -76,8 +76,16 @@ $lines = @(
     "    namespace: default",
     "current-context: jenkins-deployer@docker-desktop"
 )
+# 若 compose 在 bootstrap 之前先啟動過,Docker 會把不存在的 bind 來源建成「目錄」
+if (Test-Path $kubeconfigPath -PathType Container) {
+    Fail "ci/jenkins/secrets/kubeconfig 是目錄(compose 在 bootstrap 前先啟動過)。請先 docker compose --profile ci rm -sf jenkins,刪除該目錄後重跑本腳本"
+}
 # UTF-8 無 BOM + LF(kubectl 讀含 BOM 的 YAML 會失敗)
-[System.IO.File]::WriteAllText($kubeconfigPath, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+try {
+    [System.IO.File]::WriteAllText($kubeconfigPath, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+} catch {
+    Fail "寫入 kubeconfig 失敗:$($_.Exception.Message)"
+}
 
 Write-Host "== 4) 以 jenkins-deployer 身分檢查權限(預期:前 5 項 yes,其餘 no)"
 $checks = @(
