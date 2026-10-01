@@ -85,7 +85,7 @@ pipeline {
                         exit 1
                     fi
                     cd "$CONTEXT_DIR"
-                    mvn -B -ntp test
+                    mvn -B -ntp clean test   # clean:避免上一個 build(例如別的分支)留下的 surefire 報告被 junit 誤收
                 '''
                 // 閘門:Redis 整合測試必須真的執行(tests>0),不可被整類跳過
                 sh 'bash ci/jenkins/scripts/check-redis-suite.sh "$REDIS_SUITE_REPORT"'
