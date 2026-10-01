@@ -16,7 +16,7 @@
 - [x] 10. push CI 檔到 main,Jenkins 乾淨啟動 → 兩個 job 自動 baseline 並 SUCCESS(AC-5、AC-6、AC-7)
 - [x] 11. 失敗路徑:測試閘門(AC-9 後端+前端)、Redis 閘門殘留容器(AC-10c)、自動回滾(AC-11 後端+前端),一次性分支驗完刪除
 - [x] 12. AC-12b Cleanup log、AC-13 不並行
-- [ ] 13. code review(Stop hook)並修正;若動到 pipeline 檔則 push 後重驗相關 AC
-- [ ] 14. AC-8 即時性與分流(最後做):frontend 小改動 ≤ 90 s 觸發且可見、backend-only 只觸發後端、docs-only 不觸發;同時證明 BRANCH 用過後 main 輪詢仍有效
-- [ ] 15. 文件:`ci/jenkins/README.md` runbook、`docs/deployment/ci-cd-jenkins.md` 現況 spec、`CLAUDE.md`、`k8s/README.md`(手動備援 + apply 副作用)、`docs/deployment/architecture.md` 補 CI 一筆、記憶體檔
-- [ ] 16. 需求書 §10 驗收紀錄填寫、狀態改「已完成」+ 同步 v0.7 README 與頂層需求書目錄;AC-15 以 `git diff --stat` 確認測試檔未動;最後 commit + push,`git status` 乾淨(AC-14)
+- [x] 13. code review(Stop hook)並修正;若動到 pipeline 檔則 push 後重驗相關 AC
+- [x] 14. AC-8 即時性與分流(最後做):frontend 小改動 ≤ 90 s 觸發且可見、backend-only 只觸發後端、docs-only 不觸發;同時證明 BRANCH 用過後 main 輪詢仍有效
+- [x] 15. 文件:`ci/jenkins/README.md` runbook、`docs/deployment/ci-cd-jenkins.md` 現況 spec、`CLAUDE.md`、`k8s/README.md`(手動備援 + apply 副作用)、`docs/deployment/architecture.md` 補 CI 一筆、記憶體檔
+- [x] 16. 需求書 §10 驗收紀錄填寫、狀態改「已完成」+ 同步 v0.7 README 與頂層需求書目錄;AC-15 以 `git diff --stat` 確認測試檔未動;最後 commit + push,`git status` 乾淨(AC-14)

@@ -11,7 +11,7 @@ CI/CD:用 Jenkins 做「push 到 GitHub main → 自動測試 → 建 image → 
 
 | # | 功能 | 需求書 | 狀態 | 一句話 |
 |---|------|--------|------|--------|
-| 1 | Jenkins CI/CD(前後端分流即時上板) | [jenkins-cicd.md](jenkins-cicd.md)([todo](jenkins-cicd-todo.md)) | 開發中 | Jenkins 跑在 docker compose(k8s 外)、每分鐘輪詢 GitHub main;`backend/**` / `frontend/**` 各自觸發:測試 → docker build(git sha tag)→ `kubectl set image` 滾動更新;測試不過不上板、rollout 失敗自動回滾;Redis 整合測試在 CI 內必跑不可跳過 |
+| 1 | Jenkins CI/CD(前後端分流即時上板) | [jenkins-cicd.md](jenkins-cicd.md)([todo](jenkins-cicd-todo.md)) | ✅已完成 | Jenkins 跑在 docker compose(k8s 外)、每分鐘輪詢 GitHub main;`backend/**` / `frontend/**` 各自觸發:測試 → docker build(git sha tag)→ `kubectl set image` 滾動更新;測試不過不上板、rollout 失敗自動回滾;Redis 整合測試在 CI 內必跑不可跳過 |
 
 開發順序:單一功能。內部順序:部署用 ServiceAccount/RBAC 與 kubeconfig → Jenkins 容器與設定(JCasC/Job DSL)→ 兩份 Jenkinsfile → 端對端與失敗路徑驗證 → 文件。
 

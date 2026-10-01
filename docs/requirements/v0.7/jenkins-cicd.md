@@ -1,6 +1,6 @@
 # 需求書:Jenkins CI/CD(前後端分流即時上板)
 
-> 狀態:開發中(草稿 → 已定稿 2026-10-01 → 開發中 → 已完成)
+> 狀態:已完成(草稿 → 已定稿 2026-10-01 → 開發中 → 已完成 2026-10-01;現況以 [`../../deployment/ci-cd-jenkins.md`](../../deployment/ci-cd-jenkins.md) 為準)
 > 版本:v0.7
 > 建立日期:2026-10-01(2026-10-01 依技術審查修訂第 2 稿)
 > Todo:[jenkins-cicd-todo.md](jenkins-cicd-todo.md)
@@ -204,14 +204,14 @@ ticket-system/
 | AC-5 | ✅ | 新 volume `up -d` 12:19:29 → 12:20:47 `ticket-backend #1`、12:20:48 `ticket-frontend #1` 自動開始(≈ 80 秒,無人觸發) |
 | AC-6 | ✅ | backend #1(main @ 9ef77d7)SUCCESS **254 s**(含首次 Maven 依賴下載,Maven Total time 43 s;docker build 含拉 base image);JUnit pass 53 / fail 0 / skip 0;Redis 閘門 `tests=13 failures=0 errors=0 skipped=0`;`ticket-backend:9ef77d7` 與 `:local` 同 ID `f6aac7ee7ba2`;Deployment image = `ticket-backend:9ef77d7`;pods 2/2 Running;`rollout history` rev2 CHANGE-CAUSE `jenkins ticket-backend #1 9ef77d7`;`/api/health` 200。暖快取的 main 重建(#4)17 s |
 | AC-7 | ✅ | frontend #1 SUCCESS **71.5 s**;vitest 17 passed(JUnit pass 17);`ticket-frontend:9ef77d7` 與 `:local` 同 ID `7a8db71b0f9b`;Deployment image = `ticket-frontend:9ef77d7`;`http://localhost` 200、`/api/health` 200(經 nginx 反代);rollout history rev2 change-cause |
-| AC-8 | ✅ | **後端 only**:push `8edfa0a`(只動 `backend/Jenkinsfile`)完成 12:36:56 → `ticket-backend #5` 開始 12:37:29(**33 s**),`ticket-frontend` 未觸發;#5 SUCCESS 88 s,Deployment → `ticket-backend:8edfa0a`。**前端 only**:push `67a4128`(只動 `frontend/index.html` 標題)完成 12:37:36 → `ticket-frontend #4` 開始 12:38:27(**51 s**),`ticket-backend` 仍停在 #5;#4 SUCCESS,Deployment → `ticket-frontend:67a4128`,`curl http://localhost/` 可見 `<title>搶票系統 Ticket System</title>`。**docs only**:見下方補記。兩次 push 都在 AC-9/AC-11 用過 `BRANCH` 之後,證明輪詢基準不受參數影響。 |
+| AC-8 | ✅ | **後端 only**:push `8edfa0a`(只動 `backend/Jenkinsfile`)完成 12:36:56 → `ticket-backend #5` 開始 12:37:29(**33 s**),`ticket-frontend` 未觸發;#5 SUCCESS 88 s,Deployment → `ticket-backend:8edfa0a`。**前端 only**:push `67a4128`(只動 `frontend/index.html` 標題)完成 12:37:36 → `ticket-frontend #4` 開始 12:38:27(**51 s**),`ticket-backend` 仍停在 #5;#4 SUCCESS,Deployment → `ticket-frontend:67a4128`,`curl http://localhost/` 可見 `<title>搶票系統 Ticket System</title>`。**docs only**:push `9563bc9`(只動 `docs/`、`CLAUDE.md`、`k8s/README.md`、`ci/jenkins/README.md`)完成 12:51:59 → 135 s 後(12:54:15)兩個 job 的 lastBuild 仍為 #5 / #4,無新 build。**同 commit 改兩端**(§5 邊界):push `551af74`(backend/Jenkinsfile + frontend/Jenkinsfile + scripts)12:54:47 → 12:54:54 `ticket-backend #6` 與 `ticket-frontend #5` 同時開始、各自 SUCCESS(84.7 s / 58.6 s),Deployment 皆 → `551af74`。所有 push 都在 AC-9/AC-11 用過 `BRANCH` 之後,證明輪詢基準不受參數影響。 |
 | AC-9 | ✅ | `BRANCH=ci-test/backend-fail-test`(#2,新增必敗 `CiGateFailingTest`)FAILURE 23.9 s:Checkout/Preflight SUCCESS、**Test FAILED**,Build Image/Deploy/Cleanup 未執行;JUnit fail 1;console `CiGateFailingTest.ciGate_alwaysFails <<< FAILURE!`。`BRANCH=ci-test/frontend-fail-test`(#2,新增必敗 `ci-fail.test.js`)FAILURE 17.7 s:Test FAILED、其後未執行;vitest 1 failed / 17 passed。`docker images` 仍只有 `9ef77d7` + `local`,兩個 Deployment image 不變 |
 | AC-10 | ✅ | (a) 見上表腳本層;(b) 真實 build 報告 `tests=13`;(c) 事前 `docker run -d --name ci-redis-backend alpine sleep` 種下殘留容器後跑後端 build → pipeline `docker rm -f` 清掉並正常起 Redis、跑完 53 顆,事後 `docker ps -a` 查無該容器 |
 | AC-11 | ✅ | **後端** `BRANCH=ci-test/backend-crash`(#3,`server.port` 改 9099)FAILURE 340 s:Deploy 於 300 s 逾時 → 診斷(describe Events `Startup probe failed: Get "http://10.1.0.92:8099/api/health": dial tcp...`、logs `Tomcat started on port 9099`)→ `rollout undo` → 「已回滾:ticket-backend 現在是 ticket-backend:9ef77d7」;舊 pod 2 個全程 Running,HPA `cpu: 2%/50%` 2/2;`:local` 仍 = 9ef77d7。**前端** `BRANCH=ci-test/frontend-crash`(#3,nginx.conf 無效指令)FAILURE 202 s:180 s 逾時 → Events `Back-off restarting failed container nginx`、logs `nginx: [emerg] unknown directive "ci_test_invalid_directive"` → undo → 9ef77d7;`:local` 仍 = 9ef77d7。兩者 `rollout history` 各多 rev3(壞版)+ rev4(回滾) |
 | AC-12 | ✅ | (a) 見腳本層;(b) backend #1 Cleanup log `prune: ticket-backend → 保留 1 個 sha tag、移除 0 個(keep=5,protected=[local 9ef77d7 local])`;#4 時 `protected=[local 9ef77d7 d2dd9fe local]`——RS rev3 引用的壞版 `d2dd9fe` 被保護,符合 F-14 |
 | AC-13 | ✅ | #3 執行中再 `buildWithParameters`(BRANCH=main)→ queue API `BlockedItem`,why `Build #3 is already in progress (ETA: 1 min 48 sec)`;#3 結束後該項以 #4 執行(17 s SUCCESS,「== Deploy 9ef77d7 → 9ef77d7」set image 無變化、rollout 立即完成——同 sha 重跑邊界實證) |
-| AC-14 | ⏳ | 最後執行 |
-| AC-15 | ⏳ | 最後執行 |
+| AC-14 | ✅ | runbook `ci/jenkins/README.md`、現況 spec `docs/deployment/ci-cd-jenkins.md`、`CLAUDE.md`、`k8s/README.md`、`docs/deployment/architecture.md`、頂層 `docs/requirements/README.md` 與 `v0.7/README.md` 已更新;本需求書狀態已完成。commit:`9ef77d7`(CI 主體)、`8edfa0a`(clean test)、`67a4128`(前端標題)、`9563bc9`(文件)、`551af74`(review 修正)、收尾文件 commit。`git ls-files ci/jenkins/secrets` 只有 `.gitkeep`,kubeconfig 不在版控;`git status` 乾淨(收尾 push 後確認) |
+| AC-15 | ✅ | `git diff --stat 640c4c1..HEAD -- backend/src/test frontend/src/*.test.* frontend/src/test` 為空;應用程式碼自 v0.6 起只動了 `frontend/index.html` 的 `<title>`。後端 53 顆、前端 17 顆都在 pipeline 內實跑通過(backend #1/#5/#6、frontend #1/#4/#5) |
 
 ### 過程中發現並修正
 
@@ -220,3 +220,4 @@ ticket-system/
 3. `jenkins-plugin-cli --list` 在 stdout 非 TTY 時標頭是 `Resulting plugin list:`(非 `Installed plugins:`),`pin-plugins.sh` 兩者都認。
 4. **stale surefire 報告**:#3/#4(main)的 Jenkins 測試報告 failCount=1、Test stage UNSTABLE,但 Maven 實際 53/0——是 #2(fail-test 分支)留在 workspace 的 `TEST-com.example.ticket.CiGateFailingTest.xml` 被 `junit` glob 收進去(編譯產物已被 compiler 清掉,只剩報告檔)。修法 `mvn -B -ntp clean test`(決策 #26),由後續 main build 驗證 failCount=0。
 5. `docker compose --profile ci down` 會連 MySQL/Redis 容器一起停(資料 volume 保留)→ runbook 改教 `rm -sf jenkins`。
+6. 第二輪 code review 的低嚴重度項目(決策 #28)於 `551af74` 修正;backend #6 / frontend #5 驗證通過(`deploy.sh` 印出 `replicas 2`,Cleanup 保護清單含所有 RS 引用版本)。`mvn clean test` 生效後 backend #5/#6 的 Jenkins 測試報告 failCount=0、Test stage SUCCESS。
