@@ -24,6 +24,36 @@ services:
     volumes:
       - ticket-redis-data:/data
 
+  # ---- v0.7 CI/CD:Jenkins(profile ci,預設 `docker compose up -d` 不會起) ----
+  # 啟動:scripts/ci-bootstrap.ps1(先產 kubeconfig)或 docker compose --profile ci up -d --build
+  # 設計與 runbook:ci/jenkins/README.md、docs/deployment/ci-cd-jenkins.md
+  jenkins:
+    profiles: ["ci"]
+    build: ./ci/jenkins
+    image: ticket-jenkins:local
+    container_name: ticket-jenkins
+    hostname: ticket-jenkins
+    restart: unless-stopped
+    # Jenkins 以 jenkins(uid 1000)執行;加入 gid 0 才能讀寫 docker socket(root:root 660),不以 root 跑
+    group_add:
+      - "0"
+    ports:
+      # 只綁 loopback:Jenkins 握有 docker socket 等同主機 root,不可對 LAN 開放
+      - "127.0.0.1:${JENKINS_HTTP_PORT:-8088}:8080"
+    environment:
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin}
+      JENKINS_HTTP_PORT: ${JENKINS_HTTP_PORT:-8088}
+      JENKINS_CONTAINER_NAME: ticket-jenkins     # pipeline 用 --network container:<此名> 起拋棄式 Redis
+      KUBECONFIG: /etc/jenkins/kubeconfig
+      TZ: Asia/Taipei
+    volumes:
+      - ticket-jenkins-home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 由 scripts/ci-bootstrap.ps1 產生(jenkins-deployer SA 的最小權限 token);不進版控
+      - ./ci/jenkins/secrets/kubeconfig:/etc/jenkins/kubeconfig:ro
+    mem_limit: 4g
+
 volumes:
   ticket-mysql-data:
   ticket-redis-data:
+  ticket-jenkins-home:

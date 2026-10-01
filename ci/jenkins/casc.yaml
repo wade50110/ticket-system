@@ -1,0 +1,35 @@
+# Jenkins Configuration as Code(v0.7 CI/CD)。
+# 由 Dockerfile 烤進 image(CASC_JENKINS_CONFIG),Jenkins 每次啟動都套用;改這裡要重建容器:
+#   docker compose --profile ci up -d --build
+# 在 UI 手動改的設定會在下次啟動被覆蓋。環境變數 ${VAR:-預設} 由 compose 傳入。
+jenkins:
+  systemMessage: "ticket-system CI/CD(v0.7)。設定由 ci/jenkins/casc.yaml 與 jobs.groovy 管理,UI 上的修改會在重建容器時被覆蓋。"
+  numExecutors: 2            # 後端、前端 job 可同時各跑一個;同 job 不並行(見 jobs.groovy)
+  mode: NORMAL
+  slaveAgentPort: -1         # 不開 inbound agent 埠(只用內建節點)
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          name: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD:-admin}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+  crumbIssuer: "standard"   # CSRF 保護(預設 DefaultCrumbIssuer;新版已無 excludeClientIPFromCrumb 參數)
+
+security:
+  # Job DSL 腳本來自 image(受信任),關閉 script approval 流程才能由 JCasC 自動建 job
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: false
+
+unclassified:
+  location:
+    url: "http://localhost:${JENKINS_HTTP_PORT:-8088}/"
+    adminAddress: "ticket-system CI <ci@localhost>"
+  timestamper:
+    allPipelines: true
+
+jobs:
+  - file: /usr/local/jenkins-casc/jobs.groovy

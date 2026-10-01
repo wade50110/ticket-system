@@ -1,0 +1,115 @@
+// 前端 CI/CD pipeline(v0.7)。
+// 觸發:GitHub main 的 frontend/** 有變動(Jenkins 每分鐘輪詢)或手動 Build with Parameters。
+// 階段:Checkout → Preflight → Install → Test → Build Image → Deploy → Cleanup;任一階段失敗即 FAILURE,後續不執行。
+// 規格:docs/requirements/v0.7/jenkins-cicd.md;現況說明:docs/deployment/ci-cd-jenkins.md;job 設定:ci/jenkins/jobs.groovy。
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'main',
+               description: '要建置的分支;非 main 只切換內容(Jenkinsfile 與腳本仍來自 main),不影響輪詢,會把該分支部署到本機 k8s。')
+    }
+
+    environment {
+        APP_LABEL       = 'ticket-frontend'    // k8s pod label app=
+        DEPLOYMENT      = 'ticket-frontend'
+        CONTAINER       = 'nginx'              // k8s/frontend.yaml 的 container name
+        IMAGE           = 'ticket-frontend'
+        CONTEXT_DIR     = 'frontend'
+        REPORT_DIR      = 'ci-reports'         // vitest JUnit 報告放 docker build context 之外
+        ROLLOUT_TIMEOUT = '180s'
+        KEEP_IMAGES     = '5'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm   // 永遠先抓 main:取得 Jenkinsfile/腳本,並維持輪詢基準
+                script {
+                    if (!(params.BRANCH ==~ /[A-Za-z0-9._\/-]+/)) {
+                        error("BRANCH 不合法:${params.BRANCH}")
+                    }
+                    if (params.BRANCH != 'main') {
+                        sh """
+                            git fetch --no-tags origin +refs/heads/${params.BRANCH}:refs/remotes/origin/${params.BRANCH}
+                            git checkout -q --detach refs/remotes/origin/${params.BRANCH}
+                        """
+                    }
+                    env.SHA7 = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.IMAGE}:${env.SHA7}"
+                    currentBuild.description = "${params.BRANCH} @ ${env.SHA7}"
+                }
+            }
+        }
+
+        stage('Preflight') {
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+                    if ! docker version --format 'docker server {{.Server.Version}}'; then
+                        echo "::docker 不可用(socket 沒掛或權限不足,compose 需 group_add: [\\"0\\"])"; exit 1
+                    fi
+                    if ! kubectl get deployment "$DEPLOYMENT" -o name; then
+                        echo "::k8s 上沒有 Deployment $DEPLOYMENT(或連不到叢集 / kubeconfig 失效)。請先 kubectl apply -f k8s/frontend.yaml;pipeline 不負責初次安裝。"; exit 1
+                    fi
+                '''
+            }
+        }
+
+        stage('Install') {
+            steps {
+                sh 'cd "$CONTEXT_DIR" && npm ci --no-audit --no-fund'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+                    rm -rf "$REPORT_DIR"; mkdir -p "$REPORT_DIR"
+                    cd "$CONTEXT_DIR"
+                    npx vitest run --reporter=default --reporter=junit --outputFile.junit="../$REPORT_DIR/frontend-junit.xml"
+                '''
+            }
+            post {
+                always {
+                    // 只發佈報告;結果以上面 sh 的 exit code 為準(測試失敗 = FAILURE,不是 UNSTABLE)
+                    junit testResults: 'ci-reports/*.xml', allowEmptyResults: true, skipMarkingBuildUnstable: true
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh 'docker build -t "$IMAGE_TAG" "$CONTEXT_DIR"'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh 'bash ci/jenkins/scripts/deploy.sh "$DEPLOYMENT" "$CONTAINER" "$IMAGE_TAG" "jenkins ${JOB_NAME} #${BUILD_NUMBER} ${SHA7}" "$ROLLOUT_TIMEOUT" "$APP_LABEL"'
+                // rollout 成功後才同步 :local
+                sh 'docker tag "$IMAGE_TAG" "$IMAGE:local"'
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''#!/bin/bash
+                    set -uo pipefail
+                    protect=$(kubectl get rs -l app="$APP_LABEL" \
+                        -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{"\\n"}{end}' \
+                        | sed -n "s#^$IMAGE:##p" | sort -u | tr '\\n' ' ')
+                    bash ci/jenkins/scripts/prune-images.sh "$IMAGE" "$KEEP_IMAGES" $protect
+                '''
+            }
+        }
+    }
+}

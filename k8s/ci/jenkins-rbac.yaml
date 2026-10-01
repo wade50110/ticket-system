@@ -1,0 +1,60 @@
+# Jenkins 部署用身分(v0.7 CI/CD):只給 default namespace「換版 / 看狀態 / 回滾 / 診斷」所需的最小權限。
+# 沒有 create/delete、碰不到 Secret/ConfigMap、碰不到其他 namespace(RBAC 決策見 docs/requirements/v0.7/jenkins-cicd.md #3、#18)。
+# 套用:kubectl apply -f k8s/ci/jenkins-rbac.yaml(scripts/ci-bootstrap.ps1 會做,並產出 kubeconfig)。
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins-deployer
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-deployer
+  namespace: default
+rules:
+  # kubectl set image / annotate / rollout undo → patch;rollout status → get+watch
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  # rollout history / undo 需要列 ReplicaSet;Cleanup 以 RS 引用的 image 當保護清單
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  # 回滾診斷:get/describe pod、logs
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # describe pod 的 Events 區:沒有權限時 kubectl 會靜默省略,readiness/CrashLoop 原因就看不到
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployer
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: jenkins-deployer
+    namespace: default
+roleRef:
+  kind: Role
+  name: jenkins-deployer
+  apiGroup: rbac.authorization.k8s.io
+---
+# 長效 token(本機開發用)。以 annotation 綁 SA、不列入 SA 的 .secrets,避免被 legacy token 清理機制回收。
+# token 由 controller 非同步填入,bootstrap 腳本會等它出現再寫 kubeconfig。
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-deployer-token
+  namespace: default
+  annotations:
+    kubernetes.io/service-account.name: jenkins-deployer
+type: kubernetes.io/service-account-token

@@ -1,0 +1,130 @@
+// 後端 CI/CD pipeline(v0.7)。
+// 觸發:GitHub main 的 backend/** 有變動(Jenkins 每分鐘輪詢)或手動 Build with Parameters。
+// 階段:Checkout → Preflight → Test → Build Image → Deploy → Cleanup;任一階段失敗即 FAILURE,後續不執行。
+// 規格:docs/requirements/v0.7/jenkins-cicd.md;現況說明:docs/deployment/ci-cd-jenkins.md;job 設定:ci/jenkins/jobs.groovy。
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'main',
+               description: '要建置的分支;非 main 只切換內容(Jenkinsfile 與腳本仍來自 main),不影響輪詢,會把該分支部署到本機 k8s。')
+    }
+
+    environment {
+        APP_LABEL          = 'ticket-backend'       // k8s pod label app=
+        DEPLOYMENT         = 'ticket-backend'
+        CONTAINER          = 'ticket-backend'       // k8s/backend.yaml 的 container name
+        IMAGE              = 'ticket-backend'
+        CONTEXT_DIR        = 'backend'
+        JAVA_HOME          = '/opt/java/temurin-17' // app 是 Java 17(Jenkins 本體跑 JDK 21)
+        CI_REDIS           = 'ci-redis-backend'     // 拋棄式 Redis 容器名;測試寫死 localhost:6380
+        REDIS_SUITE_REPORT = 'backend/target/surefire-reports/TEST-com.example.ticket.stock.QuotaRedisRepositoryRedisTest.xml'
+        ROLLOUT_TIMEOUT    = '300s'
+        KEEP_IMAGES        = '5'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm   // 永遠先抓 main:取得 Jenkinsfile/腳本,並維持輪詢基準
+                script {
+                    if (!(params.BRANCH ==~ /[A-Za-z0-9._\/-]+/)) {
+                        error("BRANCH 不合法:${params.BRANCH}")
+                    }
+                    if (params.BRANCH != 'main') {
+                        sh """
+                            git fetch --no-tags origin +refs/heads/${params.BRANCH}:refs/remotes/origin/${params.BRANCH}
+                            git checkout -q --detach refs/remotes/origin/${params.BRANCH}
+                        """
+                    }
+                    env.SHA7 = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.IMAGE}:${env.SHA7}"
+                    currentBuild.description = "${params.BRANCH} @ ${env.SHA7}"
+                }
+            }
+        }
+
+        stage('Preflight') {
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+                    if ! docker version --format 'docker server {{.Server.Version}}'; then
+                        echo "::docker 不可用(socket 沒掛或權限不足,compose 需 group_add: [\\"0\\"])"; exit 1
+                    fi
+                    if ! kubectl get deployment "$DEPLOYMENT" -o name; then
+                        echo "::k8s 上沒有 Deployment $DEPLOYMENT(或連不到叢集 / kubeconfig 失效)。請先 kubectl apply -f k8s/backend.yaml;pipeline 不負責初次安裝。"; exit 1
+                    fi
+                '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+                    # 拋棄式 Redis:加入 Jenkins 容器的網路命名空間,讓測試的 localhost:6380 連得到;每次 build 全新
+                    docker rm -f "$CI_REDIS" > /dev/null 2>&1 || true
+                    docker run -d --rm --name "$CI_REDIS" \
+                        --network "container:${JENKINS_CONTAINER_NAME:-$HOSTNAME}" \
+                        redis:7-alpine redis-server --port 6380 --save "" --appendonly no > /dev/null
+                    ok=""
+                    for i in $(seq 1 20); do
+                        if [ "$(docker exec "$CI_REDIS" redis-cli -p 6380 ping 2>/dev/null || true)" = "PONG" ]; then ok=1; break; fi
+                        sleep 0.5
+                    done
+                    if [ -z "$ok" ]; then
+                        echo "::CI Redis 啟動失敗(docker socket / 殘留容器 / 6380 被佔):整合測試需要 localhost:6380"
+                        docker logs "$CI_REDIS" 2>&1 | tail -n 20 || true
+                        exit 1
+                    fi
+                    cd "$CONTEXT_DIR"
+                    mvn -B -ntp test
+                '''
+                // 閘門:Redis 整合測試必須真的執行(tests>0),不可被整類跳過
+                sh 'bash ci/jenkins/scripts/check-redis-suite.sh "$REDIS_SUITE_REPORT"'
+            }
+            post {
+                always {
+                    sh 'docker rm -f "$CI_REDIS" > /dev/null 2>&1 || true'
+                    // 只發佈報告;結果以上面 sh 的 exit code 為準(測試失敗 = FAILURE,不是 UNSTABLE)
+                    junit testResults: 'backend/target/surefire-reports/TEST-*.xml',
+                          allowEmptyResults: true, skipMarkingBuildUnstable: true
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh 'docker build -t "$IMAGE_TAG" "$CONTEXT_DIR"'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh 'bash ci/jenkins/scripts/deploy.sh "$DEPLOYMENT" "$CONTAINER" "$IMAGE_TAG" "jenkins ${JOB_NAME} #${BUILD_NUMBER} ${SHA7}" "$ROLLOUT_TIMEOUT" "$APP_LABEL"'
+                // rollout 成功後才同步 :local(手動 runbook 與 kubectl apply 用得到)
+                sh 'docker tag "$IMAGE_TAG" "$IMAGE:local"'
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''#!/bin/bash
+                    set -uo pipefail
+                    # 保護 Deployment 既存 ReplicaSet 引用的 image(rollout undo 任一版都要有 image)
+                    protect=$(kubectl get rs -l app="$APP_LABEL" \
+                        -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{"\\n"}{end}' \
+                        | sed -n "s#^$IMAGE:##p" | sort -u | tr '\\n' ' ')
+                    bash ci/jenkins/scripts/prune-images.sh "$IMAGE" "$KEEP_IMAGES" $protect
+                '''
+            }
+        }
+    }
+}

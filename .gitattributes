@@ -1,0 +1,7 @@
+# 讓在 Linux 容器(Jenkins)內執行/讀取的檔案一律 LF,避免 Windows checkout 成 CRLF 造成 "\r: command not found"
+*.sh            text eol=lf
+Jenkinsfile     text eol=lf
+*.groovy        text eol=lf
+ci/jenkins/**   text eol=lf
+k8s/ci/**       text eol=lf
+*.ps1           text eol=crlf

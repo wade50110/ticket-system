@@ -39,3 +39,10 @@ application-local.properties
 
 # ===== Docker volume 資料（如不小心 mount 到專案內） =====
 mysql-data/
+
+# ===== CI(Jenkins)機敏檔:bootstrap 產出的 kubeconfig =====
+ci/jenkins/secrets/*
+!ci/jenkins/secrets/.gitkeep
+
+# ===== CI 產出的測試報告(Jenkins workspace 用,本機跑 vitest junit 也會產生) =====
+ci-reports/
