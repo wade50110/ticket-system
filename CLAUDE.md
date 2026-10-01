@@ -39,8 +39,8 @@
 
 ### 開發基礎設施
 
-- **Docker Compose**(`docker-compose.yml`)一鍵起 MySQL 8 + Redis 7。
-- 後端與前端目前都在 host 本機跑,只有 DB / Redis 在容器內。
+- **Docker Compose**(`docker-compose.yml`)一鍵起 MySQL 8 + Redis 7;加 `--profile ci` 另起 **Jenkins**(v0.7 CI/CD,`127.0.0.1:8088`)。
+- 開發時後端與前端可在 host 本機跑(方式一);部署形態為容器化 + 本機 k8s(方式二),**push 到 GitHub main 由 Jenkins 自動測試、build image、滾動更新 k8s**(見 [`ci/jenkins/README.md`](ci/jenkins/README.md) 與 [`docs/deployment/ci-cd-jenkins.md`](docs/deployment/ci-cd-jenkins.md))。
 
 ---
 
@@ -69,7 +69,8 @@
 - ✅ v0.3:Redis 庫存正源、可切換分散式鎖、Lua 原子扣減結帳、Mock 付款、訂單/明細查詢、庫存回寫 DB 的補償機制
 - 🔨 v0.4(進行中):✅ 🅐 訂單退票(前後端含測試皆完成);❌ 🅑 票券圖片、🅒 UI 改版、🅓 搶票排隊 尚未開始
 - ✅ v0.5(部分):防黃牛限購;✅ 容器化 + Nginx + k8s + HPA(見 `docs/deployment/`);✅ v0.6 監控 Prometheus + Grafana(見 `docs/monitoring.md`)
-- ❌ 尚未做:v0.5 訂單取消、rate limit(需求書已定稿);真實金流;Jenkins/AWS 部署
+- ✅ v0.7:Jenkins CI/CD 本機版(push main → 測試 → image → k8s 滾動更新,前後端分流,失敗自動回滾;見 `docs/deployment/ci-cd-jenkins.md`)
+- ❌ 尚未做:v0.5 訂單取消、rate limit(需求書已定稿);真實金流;AWS 部署(ECR/EKS)
 
 各版本詳細規格見 `version0.1.md` / `version0.2.md` / `version0.3.md`;**各模組現況規格見 `docs/`(見第十一節,改功能前先讀對應模組的 spec)**。
 
@@ -197,9 +198,12 @@ kubectl apply -f k8s/frontend.yaml
 # 開 http://localhost 就是完整系統
 # 4) (選用) v0.6 監控:Prometheus + Grafana,開 http://localhost:3000(admin/admin)看「搶票總覽」
 kubectl apply -f k8s/monitoring/            # 細節與驗證見 k8s/monitoring/README.md
+# 5) (選用) v0.7 CI/CD:起 Jenkins,之後 push main 就自動上板(需先完成 3 的 apply)
+powershell -ExecutionPolicy Bypass -File scripts/ci-bootstrap.ps1   # 詳見 ci/jenkins/README.md
 ```
 
-> ⚠️ **改程式碼後重新部署**:image tag 固定為 `:local` 且 `imagePullPolicy: IfNotPresent`,所以「重 build image + 重 apply」**不會**讓運行中的 pod 換版(Deployment spec 沒變不觸發 rollout,舊 pod 繼續跑舊 code)。重 build 後要手動觸發:`kubectl rollout restart deployment ticket-backend`(或 `ticket-frontend`)。
+> ✅ **改程式碼後重新部署(v0.7 起)**:正規路徑是 **push 到 GitHub main**。Jenkins 每分鐘輪詢,`backend/**` / `frontend/**` 有變動就自動「測試 → build `ticket-xxx:<sha7>` → `kubectl set image` 滾動更新」;測試不過不上板、rollout 失敗自動回滾(詳見 [`ci/jenkins/README.md`](ci/jenkins/README.md))。
+> **手動備援**(Jenkins 沒開時):`docker build -t ticket-backend:local ./backend` 後 `kubectl set image deployment/ticket-backend ticket-backend=ticket-backend:local`;若 Deployment 當下已是 `:local`(例如剛 `kubectl apply`)才需要 `kubectl rollout restart deployment ticket-backend`。單純「重 build + 重 apply」不會換版(Deployment spec 沒變不觸發 rollout)。
 
 **完整步驟**(metrics-server 安裝、壓測驗證 HPA 開關 pod、`host.docker.internal` 連 host 疑難排解)見 [`k8s/README.md`](k8s/README.md);架構設計見 [`docs/deployment/architecture.md`](docs/deployment/architecture.md)。
 
@@ -250,6 +254,7 @@ kubectl apply -f k8s/monitoring/            # 細節與驗證見 k8s/monitoring/
 | 結帳(核心) | [`docs/checkout.md`](docs/checkout.md) | 搶購主流程、回滾、DB 回寫補償、付款 |
 | 訂單與退票 | [`docs/order.md`](docs/order.md) | 訂單狀態機、查詢、退票(v0.4) |
 | 監控(v0.6) | [`docs/monitoring.md`](docs/monitoring.md) | Prometheus/Grafana 部署、`/actuator/prometheus`、自訂業務指標與**埋點硬約束**(改結帳/退票埋點前必讀) |
+| CI/CD(v0.7) | [`docs/deployment/ci-cd-jenkins.md`](docs/deployment/ci-cd-jenkins.md) | Jenkins 即時上板:觸發與路徑過濾、pipeline 階段、最小 RBAC、sha tag 與 `:local` 規則、失敗回滾、手動備援(改 Jenkinsfile / 部署流程前必讀) |
 
 每份 spec 固定包含:現況規格、檔案地圖、設計意圖(不要動的理由)、已知邊界情況、已知問題/技術債、測試現況。**規格變更時直接更新對應 spec,不要另開新文件**;變更歷史交給 git。
 

@@ -144,3 +144,7 @@
 - **`retryBatch` 的 DB 整合測試**:逐筆 REQUIRES_NEW「一筆 DB 例外只回滾那筆、不污染整批」屬交易隔離,Mockito 驗不到,需 `@DataJpaTest`/`@SpringBootTest`(專案暫無 H2/testcontainers 基礎設施,與限購的 `aggregateHeldQuantities` JPQL 同批待補)。
 - **失敗記錄 dead-letter**:`decrementStock` 永遠回 0 的記錄(票券已刪等)會每 60 秒被重掃、`retryCount` 不再當停止條件(既有技術債,checkout.md 問題 6),建議設 retryCount 上限後標終態或告警。
 - **hardening**:backend Dockerfile 以 root 執行(建議非 root user)、nginx `proxy_pass` upstream 名稱在啟動時解析(frontend 先於 backend Service 存在會 crash-loop,可用變數 + resolver 緩解)。
+
+## 後續:v0.7 CI/CD(2026-10-01)
+
+本文件描述的手動流程(`docker build` → `kubectl apply/rollout restart`)在 v0.7 之後成為備援;正規上板路徑改為 **push 到 GitHub main → Jenkins 自動測試、build `ticket-xxx:<sha7>`、`kubectl set image` 滾動更新、失敗自動回滾**。Jenkins 跑在 docker compose 的 `ci` profile(k8s 外),以最小權限 ServiceAccount 操作 Deployment。見 [`ci-cd-jenkins.md`](ci-cd-jenkins.md)(現況)與 [`../../ci/jenkins/README.md`](../../ci/jenkins/README.md)(runbook)。

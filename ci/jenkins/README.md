@@ -69,7 +69,7 @@ powershell -ExecutionPolicy Bypass -File scripts/ci-bootstrap.ps1
 
 - 改 `casc.yaml` / `jobs.groovy` / `Dockerfile` / `plugins.txt` → `docker compose --profile ci up -d --build`(重建容器才生效;UI 上手動改的會被覆蓋)。
 - 升級 plugin:把 `plugins.txt` 的版本改掉(或暫時去掉版本),build 一次,再用 `bash ci/jenkins/scripts/pin-plugins.sh` 把實際安裝版本寫回 `plugins.txt`,再 build 一次確認可重現。
-- 改 `backend/Jenkinsfile`、`frontend/Jenkinsfile`、`ci/jenkins/scripts/*.sh`:push 即生效(pipeline 每次從 main 讀)。注意 `scripts/` 在 `ci/` 下不會觸發 build,但下一次 build 就會用新版。
+- 改 `backend/Jenkinsfile`、`frontend/Jenkinsfile`、`ci/jenkins/scripts/*.sh`:push 即生效(main 的 build 用 main 的版本;以 `BRANCH` 建分支時 scripts 跟著該分支走,Jenkinsfile 本身永遠由 main 載入)。注意 `scripts/` 在 `ci/` 下不會觸發 build,但下一次 build 就會用新版。
 
 ## 手動備援(Jenkins 掛掉時怎麼上板)
 
@@ -103,4 +103,5 @@ kubectl rollout restart deployment/ticket-backend
 - Jenkins 握有 docker socket = 主機 root 等級權限,**只綁 127.0.0.1**,不要改成 `0.0.0.0`,不要開到公司 LAN。
 - 開發預設密碼 `admin/admin`,要改就設 `JENKINS_ADMIN_PASSWORD` 環境變數再 `up`。
 - 部署身分是 `jenkins-deployer` SA:只能改 default namespace 的 Deployment image、看 pods/RS/events/logs;不能 create/delete、讀不到 Secret/ConfigMap、碰不到 monitoring。
+- 撤銷 Jenkins 手上的 k8s token:`kubectl delete secret jenkins-deployer-token`(secret 型長效 token 不會過期,刪 Secret 才會立即失效),之後重跑 `scripts/ci-bootstrap.ps1 -SkipCompose` 再 `docker compose --profile ci restart jenkins`。
 - 能 push 到 `main` 的人等於能在這台機器上跑任意腳本(Jenkinsfile 來自 repo)。

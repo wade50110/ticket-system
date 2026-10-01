@@ -36,7 +36,7 @@ docker build -t ticket-backend:local  ./backend
 docker build -t ticket-frontend:local ./frontend
 ```
 
-> ⚠️ **改程式碼後重新部署**:tag 固定 `:local` + `imagePullPolicy: IfNotPresent`,重 build 後單純 `kubectl apply` 不會換版(Deployment spec 沒變、不觸發 rollout,舊 pod 續跑舊 image)。重 build 後要 `kubectl rollout restart deployment ticket-backend`(或 `ticket-frontend`)才會拉起用新 image 的 pod。
+> ✅ **改程式碼後重新部署(v0.7 起)**:正規路徑是 **push 到 GitHub main**,Jenkins 自動測試、build `ticket-xxx:<sha7>`、`kubectl set image` 滾動更新(見下方「CI/CD」)。**手動備援**:`docker build -t ticket-backend:local ./backend` 後 `kubectl set image deployment/ticket-backend ticket-backend=ticket-backend:local`;若 Deployment 當下已是 `:local`(例如剛 `kubectl apply`)才需要 `kubectl rollout restart deployment ticket-backend`。單純「重 build + 重 apply」不會換版(Deployment spec 沒變、不觸發 rollout)。
 
 ### 3. 裝 metrics-server(HPA 的 CPU 指標來源)
 
@@ -87,6 +87,14 @@ kubectl run load --image=williamyeh/hey --restart=Never -- `
 ```
 
 觀察:backend 平均 CPU 上升 → HPA 幾十秒內把 replicas 從 2 往上拉 → 新 pod 起來分攤。停止壓測後約 5 分鐘冷卻 → 縮回 2。清理:`kubectl delete pod load`。
+
+## CI/CD(v0.7):push 即上板
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/ci-bootstrap.ps1   # 建部署用 SA + kubeconfig,起 Jenkins(docker compose profile ci)
+```
+
+Jenkins 在 **http://127.0.0.1:8088**(admin/admin)。之後 push 到 GitHub main:`backend/**` 變動 → `ticket-backend` job、`frontend/**` 變動 → `ticket-frontend` job,各自「測試 → build `ticket-xxx:<sha7>` → `kubectl set image` 滾動更新 → rollout 失敗自動 `rollout undo`」。前提:本頁 1~4 步已完成(pipeline 只換版,不負責初次 apply;Deployment 不存在會在 Preflight 失敗)。細節、手動備援、疑難排解見 [`../ci/jenkins/README.md`](../ci/jenkins/README.md),設計見 [`../docs/deployment/ci-cd-jenkins.md`](../docs/deployment/ci-cd-jenkins.md)。
 
 ## 監控(v0.6,選用)
 
