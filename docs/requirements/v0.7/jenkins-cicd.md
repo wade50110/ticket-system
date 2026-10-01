@@ -175,7 +175,7 @@ ticket-system/
 | 25 | 長效 token Secret 怎麼建? | `kubernetes.io/service-account-token` + annotation 綁 SA,不列入 SA `.secrets`;bootstrap 等 token 填入 | k8s 1.34 仍支援;列入 `.secrets` 會被視為 auto-generated 而受 legacy token 清理影響(審查 #16)。 |
 | 26 | Maven 要不要 `clean`? | 要,`mvn -B clean test` | 實測:workspace 重用時,前一個 build(別的分支)留下的 `TEST-*.xml` 會被 `junit` glob 誤收,造成測試報告 failCount 與 stage UNSTABLE 失真(Maven 本身 53/0);`clean` 砍掉 `target/` 根治。 |
 | 27 | deploy 邏輯放哪? | 抽成 `ci/jenkins/scripts/deploy.sh` 由兩個 Jenkinsfile 共用(非 Shared Library) | 回滾與診斷邏輯約 50 行,兩份複製易漂移;腳本在 repo 內、可在 Jenkins 外測,仍符合 #15 不另開 Shared Library。 |
-| 28 | 第二輪 code review(實作後)的小修正 | Cleanup 取不到 ReplicaSet 清單時略過清理;`deploy.sh` 拒絕 `replicas=0` 的 Deployment、CrashLoop 時補 `logs --previous`;`ci/jenkins/.dockerignore` 排除 `secrets/`;compose 加 `memswap_limit: 4g`;bootstrap 偵測 kubeconfig 被 compose 先建成目錄;tag regex 改 7~12 碼;移除 JCasC `useScriptSecurity: false`(實測 JCasC 載入的 Job DSL 不需要它,2 個 job 照常建立);文件修正「scripts 跟分支走、只有 Jenkinsfile 來自 main」 | code-reviewer 2026-10-01 第二輪 #2~#8、#10、#11,皆低嚴重度,一併處理;高/中嚴重度只有 stale surefire 報告(#26 已修)。 |
+| 28 | 第二輪 code review(實作後)的小修正 | Cleanup 取不到 ReplicaSet 清單時略過清理;`deploy.sh` 拒絕 `replicas=0` 的 Deployment、CrashLoop 時補 `logs --previous`;`ci/jenkins/.dockerignore` 排除 `secrets/`;compose 加 `memswap_limit: 4g`;bootstrap 偵測 kubeconfig 被 compose 先建成目錄;tag regex 改 7~12 碼;移除 JCasC `useScriptSecurity: false`(刪掉 volume 內持久化的設定檔後重啟驗證:JCasC 載入的 Job DSL 仍建立 2 個 job,且 job-dsl/JCasC 整合會自行把該設定持久化為 false——顯式宣告是多餘的,效果不變;安全含意寫進 runbook);文件修正「scripts 跟分支走、只有 Jenkinsfile 來自 main」 | code-reviewer 2026-10-01 第二輪 #2~#8、#10、#11,皆低嚴重度,一併處理;高/中嚴重度只有 stale surefire 報告(#26 已修)。 |
 
 ## 10. 驗收紀錄(2026-10-01)
 
@@ -221,3 +221,4 @@ ticket-system/
 4. **stale surefire 報告**:#3/#4(main)的 Jenkins 測試報告 failCount=1、Test stage UNSTABLE,但 Maven 實際 53/0——是 #2(fail-test 分支)留在 workspace 的 `TEST-com.example.ticket.CiGateFailingTest.xml` 被 `junit` glob 收進去(編譯產物已被 compiler 清掉,只剩報告檔)。修法 `mvn -B -ntp clean test`(決策 #26),由後續 main build 驗證 failCount=0。
 5. `docker compose --profile ci down` 會連 MySQL/Redis 容器一起停(資料 volume 保留)→ runbook 改教 `rm -sf jenkins`。
 6. 第二輪 code review 的低嚴重度項目(決策 #28)於 `551af74` 修正;backend #6 / frontend #5 驗證通過(`deploy.sh` 印出 `replicas 2`,Cleanup 保護清單含所有 RS 引用版本)。`mvn clean test` 生效後 backend #5/#6 的 Jenkins 測試報告 failCount=0、Test stage SUCCESS。
+7. 第三輪 code review(針對 #6 的修正 commit):`deploy.sh` 把「kubectl 失敗」與「replicas=0」分開回報、replicas 非數字也中止;Cleanup 註明 `pipefail` 是 `||` 保護的前提;`useScriptSecurity` 的移除改以「刪除 volume 內持久化設定後重啟」實測(見決策 #28)。其餘項目經實跑確認為誤判:Cleanup 的 `||` 在 `set -uo pipefail` 下可攔到 kubectl 失敗、`--previous` 區塊對未重啟 pod 安靜略過且暫存檔會清掉、ps1 try/catch 行為正確、`memswap_limit` 與 `.dockerignore` 已生效、驗收紀錄數字與 git 一致。

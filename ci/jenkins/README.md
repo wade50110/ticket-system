@@ -105,3 +105,4 @@ kubectl rollout restart deployment/ticket-backend
 - 部署身分是 `jenkins-deployer` SA:只能改 default namespace 的 Deployment image、看 pods/RS/events/logs;不能 create/delete、讀不到 Secret/ConfigMap、碰不到 monitoring。
 - 撤銷 Jenkins 手上的 k8s token:`kubectl delete secret jenkins-deployer-token`(secret 型長效 token 不會過期,刪 Secret 才會立即失效),之後重跑 `scripts/ci-bootstrap.ps1 -SkipCompose` 再 `docker compose --profile ci restart jenkins`。
 - 能 push 到 `main` 的人等於能在這台機器上跑任意腳本(Jenkinsfile 來自 repo)。
+- JCasC 載入 `jobs.groovy` 時,job-dsl 整合會把「Job DSL script security」持久化為關閉(視 image 內的腳本為受信任)。因此日後若在 UI 另建 seed job,它的 DSL 也不會經過 approval——job 定義請只放在 repo 的 `jobs.groovy`。

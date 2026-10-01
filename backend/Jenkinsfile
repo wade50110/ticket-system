@@ -117,7 +117,7 @@ pipeline {
         stage('Cleanup') {
             steps {
                 sh '''#!/bin/bash
-                    set -uo pipefail
+                    set -uo pipefail   # pipefail 是下面 `protect=$(...) || {...}` 能攔到 kubectl 失敗的前提,不要拿掉
                     # 保護 Deployment 既存 ReplicaSet 引用的 image(rollout undo 任一版都要有 image)
                     protect=$(kubectl get rs -l app="$APP_LABEL" \
                         -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{"\\n"}{end}' \

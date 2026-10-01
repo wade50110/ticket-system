@@ -18,9 +18,10 @@ current_image() {
 }
 
 prev_img=$(current_image)
-replicas=$(kubectl get deployment "$dep" -o jsonpath='{.spec.replicas}')
-if [ "${replicas:-0}" -le 0 ]; then
-    echo "::Deployment $dep 的 replicas=0:新版不會真的啟動、rollout status 會假成功,無法驗證;請先 scale 回來再部署"
+replicas=$(kubectl get deployment "$dep" -o jsonpath='{.spec.replicas}') \
+    || { echo "::讀不到 Deployment $dep(kubectl 失敗:連線 / RBAC / kubeconfig),中止部署"; exit 1; }
+if ! [[ "$replicas" =~ ^[0-9]+$ ]] || [ "$replicas" -le 0 ]; then
+    echo "::Deployment $dep 的 replicas=${replicas:-?}:新版不會真的啟動、rollout status 會假成功,無法驗證;請先 scale 回來再部署"
     exit 1
 fi
 echo "== Deploy $dep/$ctr:$prev_img → $img(timeout $timeout,replicas $replicas)"
