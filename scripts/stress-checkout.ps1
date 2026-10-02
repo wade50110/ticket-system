@@ -1,17 +1,17 @@
-# 並發壓測：驗證搶票不超賣
+﻿# 並發壓測：驗證搶票不超賣
 #
 # 流程：N 個顧客帳號各自加 1 張票券到購物車，然後同時 POST /api/checkout。
 # 預期：stock=10、N=50 時，10 個 200、40 個 409（庫存不足）、Redis stock=0、DB stock 最終=0。
 #
 # 用法：
-#   .\stress-checkout.ps1 -TicketId 1 -N 50 -BaseUrl http://localhost:8095
+#   .\stress-checkout.ps1 -TicketId 1 -N 50 -BaseUrl http://localhost   (k8s 模式;host 開發模式用 http://localhost:8099)
 #
 # 前置：先用 admin 把 ticket stock 設成想測試的值（例：10）。
 
 param(
     [Parameter(Mandatory = $true)][int]$TicketId,
     [int]$N = 50,
-    [string]$BaseUrl = "http://localhost:8095",
+    [string]$BaseUrl = "http://localhost",   # k8s 模式走 nginx LB;host 開發模式改 http://localhost:8099
     [string]$UsernamePrefix = "stress",
     [string]$Password = "Aa123456!"
 )

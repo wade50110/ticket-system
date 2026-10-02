@@ -1,248 +1,99 @@
-# Ticket System Backend (v0.1)
+# ticket-system backend(Spring Boot)
 
-Spring Boot 3.2.5 + Spring Security 6 + JPA + MySQL，提供註冊／登入／JWT 驗證的後端 API。
+搶票系統後端:Java 17、Spring Boot 3.2.5(web / security / data-jpa / validation / actuator)、MySQL 8、Redis 7 + Redisson。核心是「**Redis 庫存正源 + 可切換分散式鎖 + Lua 原子扣減**」防超賣,MySQL 只做事後非同步回寫。
 
----
+> 本檔是後端入口。規格以 [`../docs/`](../docs/) 各模組 spec 為準;技術棧、開發規則見 [`../CLAUDE.md`](../CLAUDE.md)。
 
-## 技術棧
+## 模組(`com.example.ticket`)
 
-| 層級 | 技術 |
-|------|------|
-| 語言 | Java 17 |
-| 框架 | Spring Boot 3.2.5 |
-| 安全 | Spring Security 6（Stateless + JWT） |
-| 持久層 | Spring Data JPA + Hibernate |
-| JWT | jjwt 0.12.5 |
-| 資料庫 | MySQL 8 |
-| 建置 | Maven |
+| 套件 | 內容 | spec |
+|------|------|------|
+| `auth/` | User / Role、`JwtService`、`JwtAuthFilter`、`UserService`(BCrypt)、`AuthController` | [`docs/auth.md`](../docs/auth.md) |
+| `ticket/` | 票券 CRUD(admin)、顧客查詢(上架時間窗)、Redis 雙寫 | [`docs/ticket.md`](../docs/ticket.md) |
+| `cart/` | 購物車(庫存檢查不預扣、限購預檢) | [`docs/cart.md`](../docs/cart.md) |
+| `stock/` | `StockRedisRepository`(Lua DECRBY)、`QuotaRedisRepository`(限購額度)、啟動載入與對帳 | [`docs/inventory.md`](../docs/inventory.md) |
+| `lock/` | `DistributedLock` 介面;`RedissonDistributedLock`(預設)/ `RedisTemplateDistributedLock`(手刻 SET NX PX + Lua) | [`docs/inventory.md`](../docs/inventory.md) |
+| `checkout/` | 結帳主流程、`StockSyncListener`(@Async 回寫 DB)、`stock_sync_failed` 補償、退票庫存回補 | [`docs/checkout.md`](../docs/checkout.md) |
+| `order/` | 訂單、明細快照、退票(`RefundService`) | [`docs/order.md`](../docs/order.md) |
+| `payment/` | `PaymentService` 介面 + `MockPaymentService`(必成功) | [`docs/checkout.md`](../docs/checkout.md) |
+| `metrics/` | `TicketMetrics`:結帳成功/失敗、超賣防護、退票、結帳延遲(Micrometer) | [`docs/monitoring.md`](../docs/monitoring.md) |
+| `config/` | `SecurityConfig`(Security + CORS)、`GlobalExceptionHandler`、`SchedulerConfig`(ShedLock) | [`docs/auth.md`](../docs/auth.md) |
 
----
+## API 一覽
 
-## 專案結構
+| Method | Path | 權限 | 說明 |
+|--------|------|------|------|
+| POST | `/api/auth/register` | 公開 | 註冊(`username`、`email`、`password` 必填) |
+| POST | `/api/auth/login` | 公開 | 登入,回 JWT |
+| GET | `/api/auth/me` | 已登入 | 目前使用者 |
+| GET | `/api/health` | 公開 | 健康檢查(k8s probe 也用這個) |
+| GET | `/api/tickets`、`/api/tickets/{id}` | 已登入 | 票券列表 / 單筆(僅上架時間窗內) |
+| GET/POST/PUT/DELETE | `/api/admin/tickets...` | ADMIN | 票券 CRUD(含列表、單筆) |
+| POST | `/api/admin/quota/reconcile` | ADMIN | 限購額度對帳 |
+| GET/POST/PATCH/DELETE | `/api/cart...` | CUSTOMER | 購物車 |
+| POST | `/api/checkout` | CUSTOMER | 結帳當前購物車(搶購核心) |
+| GET | `/api/orders`、`/api/orders/{id}` | CUSTOMER | 自己的訂單 / 明細 |
+| POST | `/api/orders/{id}/refund` | CUSTOMER | 退票(僅 PAID、本人、整筆) |
+| POST | `/api/admin/stock-sync/retry` | ADMIN | 手動觸發庫存回寫重試 |
+| GET | `/actuator/prometheus` | 公開 | Prometheus 指標(其餘 actuator 端點未暴露,匿名 403) |
 
-```
-backend/
-├── pom.xml
-└── src/main/
-    ├── java/com/example/ticket/
-    │   ├── TicketApplication.java        # 進入點
-    │   ├── HealthController.java         # /api/health
-    │   ├── auth/
-    │   │   ├── User.java                 # JPA Entity
-    │   │   ├── UserRepository.java
-    │   │   ├── UserService.java          # 註冊／驗證（BCrypt）
-    │   │   ├── JwtService.java           # 簽發、解析 JWT
-    │   │   ├── JwtAuthFilter.java        # Authorization Header 解析
-    │   │   ├── AuthController.java       # /api/auth/{login,register,me}
-    │   │   └── dto/                      # 請求／回應 DTO
-    │   └── config/
-    │       ├── SecurityConfig.java       # Spring Security + CORS
-    │       └── GlobalExceptionHandler.java
-    └── resources/
-        └── application.yml
-```
+請求/回應格式與錯誤碼以各模組 spec 為準。
 
----
+## 設定(`src/main/resources/application.yml`)
 
-## API 規格
+全部可用環境變數覆蓋(k8s 由 ConfigMap/Secret `envFrom` 注入):
 
-### 1. 註冊
-```
-POST /api/auth/register
-Content-Type: application/json
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `3307` / `ticketdb` | MySQL(`ddl-auto: update` 自動建表) |
+| `DB_USERNAME` / `DB_PASSWORD` | `root` / `root` | 開發用 |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6380` | 庫存正源、鎖、限購額度、ShedLock |
+| `JWT_SECRET` | 開發用預設值 | HS256,≥ 32 bytes;正式環境必換 |
+| `server.port` | `8099` | 不是 8080 |
+| `ticket.lock.type` | `redisson` | 可切 `manual`(手刻 Lua 版) |
 
-{
-  "username": "leo301",
-  "email": "leo301@ton-wa.com",
-  "password": "test1234",
-  "name": "Leo"
-}
-```
-回應 200：
-```json
-{ "id": 1, "username": "leo301", "email": "leo301@ton-wa.com", "name": "Leo" }
-```
-
-### 2. 登入
-```
-POST /api/auth/login
-Content-Type: application/json
-
-{ "username": "leo301", "password": "test1234" }
-```
-回應 200：
-```json
-{
-  "accessToken": "eyJhbGciOi...",
-  "tokenType": "Bearer",
-  "expiresIn": 3600,
-  "user": { "id": 1, "username": "leo301", "email": "leo301@ton-wa.com", "name": "Leo" }
-}
-```
-
-### 3. 取得目前登入者
-```
-GET /api/auth/me
-Authorization: Bearer <accessToken>
-```
-
-### 4. 健康檢查
-```
-GET /api/health
-```
-
----
-
-## 啟動前置：用 Docker 建立 MySQL
-
-> 環境：Windows 11 + Docker Desktop。
-> 目標：啟一個乾淨的 MySQL 8 容器，帳密都用 `root`，資料庫 `ticketdb`，host port `3307`。
-
-### 1. 安裝 Docker Desktop
-- 下載：https://www.docker.com/products/docker-desktop/
-- 安裝完開啟 Docker Desktop，等右下角小鯨魚圖示變綠（狀態：Running）
-
-驗證安裝：
-```powershell
-docker --version
-docker info
-```
-
-### 2. 啟動 MySQL 容器（兩種方式擇一）
-
-#### 方法 A：用本 repo 提供的 docker-compose（推薦）
-
-專案根目錄 `ticket-system/docker-compose.yml` 已準備好，直接：
+## 本機啟動(開發模式)
 
 ```powershell
-cd ticket-system
-docker compose up -d
+# 1) MySQL / Redis
+powershell -ExecutionPolicy Bypass -File ..\scripts\start-stack.ps1 -Mode infra     # 或 docker compose up -d
+# 2) 後端(port 8099)
+..\..\.claude\run-backend.cmd      # 這台機器沒有 mvnw、mvn 不在 PATH:此檔用 corretto-17 + IntelliJ 內建 Maven
+#   有 mvn 的機器:mvn spring-boot:run
+# 3) 驗證
+curl.exe http://localhost:8099/api/health
 ```
 
-`docker-compose.yml` 內容：
-```yaml
-services:
-  mysql:
-    image: mysql:8.0
-    container_name: ticket-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: ticketdb
-      TZ: Asia/Taipei
-    ports:
-      - "3307:3306"
-    volumes:
-      - ticket-mysql-data:/var/lib/mysql
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+完整系統(k8s + nginx + HPA)請用 `..\scripts\start-stack.ps1`,見 [`../README.md`](../README.md)。
 
-volumes:
-  ticket-mysql-data:
-```
-
-#### 方法 B：單行 docker run
+## 測試
 
 ```powershell
-docker run -d `
-  --name ticket-mysql `
-  -e MYSQL_ROOT_PASSWORD=root `
-  -e MYSQL_DATABASE=ticketdb `
-  -e TZ=Asia/Taipei `
-  -p 3307:3306 `
-  -v ticket-mysql-data:/var/lib/mysql `
-  --restart unless-stopped `
-  mysql:8.0 `
-  --character-set-server=utf8mb4 `
-  --collation-server=utf8mb4_unicode_ci
+mvn test        # 同上,這台機器以 IntelliJ 內建 Maven + JAVA_HOME=corretto-17 執行
 ```
 
-> PowerShell 的續行符號是反引號 `` ` ``，不是反斜線 `\`。
+- 共 **53** 顆:Mockito 單元測試 + `QuotaRedisRepositoryRedisTest`(**13** 顆,需本機 Redis `localhost:6380`,用 db 15;Redis 沒開會整類跳過,只剩 40 顆)。
+- Jenkins 的 `ticket-backend` job 每次 push 都跑全套,且自起拋棄式 Redis、檢查該整合測試真的執行(`tests>0`),不會被靜默跳過。
+- 搶購/結帳的併發實測(多個結帳同時打、驗證不超賣)見 `../version0.3.md`〈操作流程驗證〉路徑 C。
+- 規則:完成任何修改都要補測試並實際跑過;測試失敗不得改弱(見 `../CLAUDE.md`)。
 
-### 3. 驗證 MySQL 已啟動
+## 容器化與部署
 
-```powershell
-docker ps                       # 看到 ticket-mysql 狀態 Up
-docker logs ticket-mysql --tail 20   # 看到 "ready for connections"
-docker exec -it ticket-mysql mysql -uroot -proot -e "SHOW DATABASES;"
-```
+- `Dockerfile`:多階段(`maven:3.9-eclipse-temurin-17` build,跳過測試 → `eclipse-temurin:17-jre` 執行),`exec java` 讓 JVM 成為 PID 1 以接收 SIGTERM(graceful shutdown)。
+- image:Jenkins 以 `ticket-backend:<git sha7>` 建、rollout 成功後同步打 `:local`;手動 `docker build -t ticket-backend:local .` 僅備援。
+- k8s:`../k8s/backend.yaml`(ConfigMap/Secret/Deployment/Service/HPA 2~10,CPU 50%);`Jenkinsfile` 為 CI/CD pipeline(Checkout → Preflight → Test → Build Image → Deploy → Cleanup),說明見 [`../docs/deployment/ci-cd-jenkins.md`](../docs/deployment/ci-cd-jenkins.md)。
 
-第一次啟動需 10~30 秒初始化，太早連會被拒。
+## 設計重點(改這些模組前先讀)
 
-### 4. 常用維運指令
+1. **Redis 是庫存正源,DB 是事後紀錄**:結帳只信 Redis 扣減結果;DB `tickets.stock` 由事件非同步回寫;啟動時 key 已存在不可覆蓋。
+2. **防超賣靠 Lua 原子扣減**:`GET → 判斷 → DECRBY` 一支腳本完成;不足時 `INCRBY` 回滾。限購檢查與扣減同一支 Lua。
+3. **分散式鎖可切換**、**多票結帳依 ticketId 升冪加鎖**防死鎖。
+4. **訂單快照**:`order_items` 存下單當下的單價與票名。
+5. **庫存回寫補償**:`@Retryable` 3 次失敗 → `stock_sync_failed` 表 → `@Scheduled` 每分鐘重試(多 pod 以 ShedLock 只跑一份)。
+6. **付款是 Mock**,換真金流只換 bean。
+7. **指標埋點硬約束**:結帳鎖臨界區有 `catch(RuntimeException) → rollback`,埋點必須 exception-safe、純記憶體、預註冊(見 `docs/monitoring.md`)。
 
-| 動作 | 指令 |
-|------|------|
-| 停止 | `docker compose stop` 或 `docker stop ticket-mysql` |
-| 啟動 | `docker compose start` 或 `docker start ticket-mysql` |
-| 看 log | `docker logs -f ticket-mysql` |
-| 進 MySQL CLI | `docker exec -it ticket-mysql mysql -uroot -proot` |
-| 砍掉重來（保留資料） | `docker rm -f ticket-mysql` |
-| 連同資料一起刪 | `docker compose down -v` |
+## 安全性
 
-### 常見問題
-
-**Q：port 3307 已被佔用？**
-改 `docker-compose.yml` 的 `ports` 與 `application.yml` 的 `datasource.url` 中的 port。
-
-**Q：本機已裝 MySQL Service 佔用 3306？**
-本 repo 用 3307 故意避開預設 port，正常情況不會衝突。如真的衝到：
-```powershell
-Get-Service | Where-Object { $_.Name -like 'MySQL*' }
-Stop-Service MySQL80      # 名稱依實際為準
-```
-
----
-
-## 啟動後端
-
-### 1. 連線設定（已預設 `application.yml`）
-
-| 設定 | 預設值 |
-|------|--------|
-| DB URL | `jdbc:mysql://localhost:3307/ticketdb` |
-| DB User | `root` |
-| DB Pass | `root` |
-| Server Port | `8095` |
-| JWT Secret | 開發用預設值（請以 `JWT_SECRET` 環境變數覆蓋） |
-| JWT 有效期 | 3600 秒 |
-
-### 2. 啟動
-
-```powershell
-cd backend
-# 可選：覆蓋 JWT 密鑰（長度需 >= 32 bytes）
-# $env:JWT_SECRET = "your-very-strong-secret-key-at-least-32-bytes"
-mvn spring-boot:run
-```
-
-啟動成功後監聽 `http://localhost:8095`。
-
-### 3. 驗證
-
-```powershell
-curl http://localhost:8095/api/health
-```
-
-或用 Postman 打 `POST /api/auth/register`、`POST /api/auth/login`。
-
----
-
-## 安全性說明
-
-- 密碼以 **BCrypt** 雜湊儲存（cost factor = 10，Spring 預設）
-- JWT 使用 **HS256**，密鑰由 `jwt.secret` 注入
-- Session 設為 `STATELESS`，受保護 API 需帶 `Authorization: Bearer <token>`
-- CORS 僅允許 `http://localhost:5173`（前端開發伺服器）
-- ⚠️ 開發階段 `root/root` 與預設 JWT secret 僅供本機，正式部署務必替換
-
----
-
-## v0.2+ 規劃
-
-- Refresh Token 機制
-- 登入失敗計數鎖定（Redis）
-- 票券、搶購、訂單模組
-- Redis 分散式鎖、SQS、Docker 化後端
-- Jenkins / AWS 部署
+- 密碼 BCrypt;JWT HS256、`STATELESS`,受保護 API 帶 `Authorization: Bearer <token>`;CORS 允許 `http://localhost:5173`(開發)。
+- `root/root`、預設 `JWT_SECRET`、k8s Secret 內的明文都只給本機開發;正式環境以環境變數 / 外部 Secret 管理覆蓋。

@@ -15,10 +15,12 @@ v0.6 監控的部署與驗證步驟。設計與決策見 [`../../docs/requiremen
 ## 前置
 
 1. 依 [`../README.md`](../README.md) 把 app 跑起來(docker compose 的 MySQL/Redis、build image、apply backend/frontend、metrics-server)。
-2. **後端 image 必須是含 v0.6 指標程式的版本**:改過後端要重 build 並 `kubectl rollout restart deployment ticket-backend`,否則 `/actuator/prometheus` 是 404。
+2. **後端 image 必須含 v0.6 指標程式**(v0.6 之後 Jenkins 建的版本與手動 build 的 `:local` 都有)。若 `/actuator/prometheus` 回 404 代表跑到舊 image,依 [`../README.md`](../README.md) 的手動備援換版。
 3. `k8s/backend.yaml` 的 pod template 已含 `prometheus.io/*` 註解,apply 過即可。
 
 ## 部署
+
+> 一鍵:`scripts/start-stack.ps1 -Monitoring` 會連 app 一起起並做本節的 apply;`scripts/stop-stack.ps1` 會一併拆掉監控。以下是手動版。
 
 ```powershell
 cd ticket-system

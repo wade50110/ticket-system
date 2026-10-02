@@ -1,6 +1,6 @@
 # 需求書目錄
 
-每個新功能一份需求書,開發前寫、定稿後才開發。完整流程與模板見 [`../../../.claude/skills/write-requirements.md`](../../../.claude/skills/write-requirements.md)。
+每個新功能一份需求書,開發前寫、定稿後才開發。完整流程與模板見 [`../../../.claude/skills/write-requirements/SKILL.md`](../../../.claude/skills/write-requirements/SKILL.md)。
 
 ## 組織方式:一個版本一個 folder
 

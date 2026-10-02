@@ -40,6 +40,7 @@
 ### 開發基礎設施
 
 - **Docker Compose**(`docker-compose.yml`)一鍵起 MySQL 8 + Redis 7;加 `--profile ci` 另起 **Jenkins**(v0.7 CI/CD,`127.0.0.1:8088`)。
+- **一鍵啟動/關閉整套環境**:`scripts/start-stack.ps1`(`-Monitoring` / `-Ci` / `-Mode infra`)、`scripts/stop-stack.ps1`(資料 volume 保留);Claude Code 內對應 skill `/start-ticket-system`、`/stop-ticket-system`。
 - 開發時後端與前端可在 host 本機跑(方式一);部署形態為容器化 + 本機 k8s(方式二),**push 到 GitHub main 由 Jenkins 自動測試、build image、滾動更新 k8s**(見 [`ci/jenkins/README.md`](ci/jenkins/README.md) 與 [`docs/deployment/ci-cd-jenkins.md`](docs/deployment/ci-cd-jenkins.md))。
 
 ---
@@ -133,9 +134,10 @@ frontend/src/
 | POST | `/api/auth/login` | 公開 | 登入,回 JWT |
 | GET | `/api/auth/me` | 已登入 | 取得目前使用者 |
 | GET | `/api/health` | 公開 | 健康檢查 |
-| GET | `/api/tickets` | 已登入 | 票券列表(僅上架時間窗內) |
-| POST/PUT/DELETE | `/api/admin/tickets...` | ADMIN | 票券 CRUD(Redis 雙寫) |
-| GET/POST/PUT/DELETE | `/api/cart...` | CUSTOMER | 購物車操作 |
+| GET | `/api/tickets`、`/api/tickets/{id}` | 已登入 | 票券列表 / 單筆(僅上架時間窗內) |
+| GET/POST/PUT/DELETE | `/api/admin/tickets...` | ADMIN | 票券 CRUD(含列表、單筆;Redis 雙寫) |
+| POST | `/api/admin/quota/reconcile` | ADMIN | 限購額度對帳(v0.5) |
+| GET/POST/PATCH/DELETE | `/api/cart...` | CUSTOMER | 購物車操作(數量調整是 PATCH) |
 | POST | `/api/checkout` | CUSTOMER | 結帳當前購物車(搶購核心) |
 | GET | `/api/orders`、`/api/orders/{id}` | CUSTOMER | 查自己的訂單/明細 |
 | POST | `/api/orders/{id}/refund` | CUSTOMER | 退票(僅 PAID、僅本人、整筆退) |
@@ -160,6 +162,8 @@ frontend/src/
 
 兩種啟動方式:**方式一** 開發用(前後端在 host 直接跑,改一行馬上看到),**方式二** 容器化 + k8s(貼近正式部署、可 demo HPA autoscale)。
 
+> **一鍵腳本**:`scripts/start-stack.ps1`(方式二;`-Mode infra` 只起 DB/Redis 給方式一;`-Monitoring`、`-Ci` 加監控 / Jenkins)與 `scripts/stop-stack.ps1`(全部關掉,資料 volume 保留)。Claude Code 內對應 skill `/start-ticket-system`、`/stop-ticket-system`。下面是手動步驟。
+
 ### 方式一:host 本機跑(開發預設)
 
 ```powershell
@@ -168,12 +172,11 @@ cd C:\Users\tw24301\Desktop\claudeTest\ticket-system
 docker compose up -d
 docker ps                       # 確認 ticket-mysql、ticket-redis 都 Up
 
-# 2) 起後端(port 8099)
-cd .\backend
-.\mvnw spring-boot:run
+# 2) 起後端(port 8099):repo 沒有 mvnw、這台機器 mvn 不在 PATH,用 ..\.claude\run-backend.cmd(corretto-17 + IntelliJ 內建 Maven)
+..\.claude\run-backend.cmd          # 有 mvn 的機器:cd .\backend; mvn spring-boot:run
 
 # 3) 起前端(port 5173)
-cd ..\frontend
+cd .\frontend
 npm install
 npm run dev
 ```
@@ -211,12 +214,14 @@ powershell -ExecutionPolicy Bypass -File scripts/ci-bootstrap.ps1   # 詳見 ci/
 
 ## 十、測試(對應根目錄開發規則第 1 條)
 
-- 後端測試指令:
+- 後端測試指令(repo 沒有 mvnw;這台機器 mvn 不在 PATH,用 IntelliJ 內建 Maven + corretto-17):
   ```powershell
   cd C:\Users\tw24301\Desktop\claudeTest\ticket-system\backend
-  .\mvnw test
+  $env:JAVA_HOME = "C:\Users\tw24301\.jdks\corretto-17.0.13"
+  & "C:\Program Files\JetBrains\IntelliJ IDEA 2026.1.3\plugins\maven\lib\maven3\bin\mvn.cmd" test
   ```
-- 完成任何後端功能/修改後要補對應測試(JUnit + Spring Boot Test),並實際跑過 `mvnw test` 確認通過。
+  共 53 顆;其中 `QuotaRedisRepositoryRedisTest` 13 顆需要本機 Redis(`docker compose up -d`),沒開會整類跳過只剩 40 顆——Jenkins 內一定會跑。
+- 完成任何後端功能/修改後要補對應測試(JUnit + Spring Boot Test),並實際跑過 `mvn test` 確認通過。
 - 搶購/結帳這類併發邏輯,除了單元測試,建議照 `version0.3.md`〈操作流程驗證〉的路徑 C(同時發多個結帳請求,驗證不超賣)實測。
 
 - 前端測試指令(Vitest + React Testing Library,v0.4 導入):
@@ -240,7 +245,7 @@ powershell -ExecutionPolicy Bypass -File scripts/ci-bootstrap.ps1   # 詳見 ci/
 - **一個版本一個 folder**:`docs/requirements/<版本>/`(例:[`docs/requirements/v0.5/`](docs/requirements/v0.5/)),folder 內 `README.md` 是「這版總共改什麼」的總覽,細項需求書為 `<功能代號>.md`(去版本前綴)。先看總覽,想看細項再點進去。
 - 每個功能一份需求書,決策在定稿階段做完,問答記入需求書內的「決策紀錄」章節;**經確認「已定稿」後才開始開發**。
 - 開發時從需求書的驗收條件拆出 todo 檔(`<功能代號>-todo.md`)放同 folder,逐項完成並即時更新。
-- 完整流程與模板見 [`../.claude/skills/write-requirements.md`](../.claude/skills/write-requirements.md)。
+- 完整流程與模板見 [`../.claude/skills/write-requirements/SKILL.md`](../.claude/skills/write-requirements/SKILL.md)。
 - 功能完成後需求書轉為歷史紀錄,現況一律以 `docs/` 模組 spec 為準。
 
 ### 模組現況 spec(`docs/`,改功能前先讀對應那份)

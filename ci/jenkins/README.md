@@ -51,6 +51,7 @@ powershell -ExecutionPolicy Bypass -File scripts/ci-bootstrap.ps1
 - 啟動後一分鐘內兩個 job 會自動輪詢並各跑一次(沒有建置紀錄時第一次輪詢視為有變動),把當下 main 部署上去。首次後端 build 要下載 Maven 依賴,約 10~15 分鐘;之後約 5 分鐘。
 - 只要 RBAC/kubeconfig,不起 Jenkins:`-SkipCompose`;之後手動 `docker compose --profile ci up -d --build`。
 - 單純 `docker compose up -d`(不帶 profile)**不會**起 Jenkins。
+- 也可以用 `scripts/start-stack.ps1 -Ci`:先起 MySQL/Redis 與 k8s app,再起 Jenkins(kubeconfig 不存在時自動 bootstrap);`scripts/stop-stack.ps1` 全部關掉(Jenkins build 紀錄在 volume,保留)。
 
 ## 日常使用
 

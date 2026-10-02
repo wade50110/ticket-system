@@ -4,6 +4,8 @@
 
 架構:前端 nginx(serve CSR 靜態 + 反代 `/api`)→ 後端 Service(ClusterIP,負載均衡)→ backend pods(Deployment + HPA)。MySQL/Redis 留在 k8s 外(docker-compose)。
 
+> **一鍵版**:`powershell -ExecutionPolicy Bypass -File scripts/start-stack.ps1`(加 `-Monitoring` / `-Ci` 可一併起監控 / Jenkins)會自動做下面第 0、2~5 步(第 1 步啟用 Kubernetes 是 GUI 操作,腳本只會檢查並提示);`scripts/stop-stack.ps1` 全部關掉(資料 volume 保留)。Claude Code 內對應 `/start-ticket-system`、`/stop-ticket-system`。以下是手動逐步版,排錯時用。
+
 ## 前置
 
 ### 0. 起 MySQL / Redis(k8s 外)
@@ -44,10 +46,12 @@ Docker Desktop k8s 預設沒有 metrics-server,且本機 kubelet 是自簽憑證
 
 ```powershell
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-# patch:略過 kubelet TLS 驗證(本機自簽)
+# patch:略過 kubelet TLS 驗證(本機自簽)。PowerShell 5.1 會把參數裡的雙引號吃掉,JSON 內的 " 要寫成 \"
 kubectl patch deployment metrics-server -n kube-system --type=json `
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  -p='[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--kubelet-insecure-tls\"}]'
 ```
+
+> PowerShell 7.3+ / Git Bash 直接用 `-p='[{"op":"add",...}]'` 即可;`start-stack.ps1` 會自動做這步(含補 patch 的檢查)。
 
 等它就緒後,`kubectl top nodes` / `kubectl top pods` 有數字,HPA 才問得到 CPU。
 
@@ -98,7 +102,7 @@ Jenkins 在 **http://127.0.0.1:8088**(admin/admin)。之後 push 到 GitHub main
 
 ## 監控(v0.6,選用)
 
-Prometheus + Grafana 的部署與驗證見 [`monitoring/README.md`](monitoring/README.md)。app 起來後 `kubectl apply -f k8s/monitoring/`,開 **http://localhost:3000**(admin/admin)看「搶票總覽」儀表板(RPS、p99、結帳成功/失敗、超賣防護、HPA 副本數、每 pod CPU)。後端 image 需含 v0.6 指標程式(改過後端要重 build + `rollout restart`)。
+Prometheus + Grafana 的部署與驗證見 [`monitoring/README.md`](monitoring/README.md)。app 起來後 `kubectl apply -f k8s/monitoring/`,開 **http://localhost:3000**(admin/admin)看「搶票總覽」儀表板(RPS、p99、結帳成功/失敗、超賣防護、HPA 副本數、每 pod CPU)。後端 image 需含 v0.6 指標程式(v0.6 之後的任何版本都有;若 `/actuator/prometheus` 回 404 就是跑到舊 image,依上面的手動備援換版)。
 
 ## 疑難排解
 
@@ -113,7 +117,7 @@ pod 內解析不到 `host.docker.internal`(隨 Docker Desktop 版本而異,pod �
      - ip: "192.168.65.254"        # Docker Desktop host-gateway,實際值以 `kubectl exec` 內 ping 確認
        hostnames: ["host.docker.internal"]
    ```
-3. **CoreDNS rewrite**:editk `kube-system/coredns` ConfigMap 加 rewrite 規則。
+3. **CoreDNS rewrite**:`kubectl -n kube-system edit configmap coredns` 加 rewrite 規則。
 
 先 `kubectl logs <backend-pod>` 看是哪個(MySQL 還是 Redis)連不上。
 
